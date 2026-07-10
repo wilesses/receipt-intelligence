@@ -1,0 +1,194 @@
+{% extends "base.html" %}
+{% block title %}Загрузка чеков{% endblock %}
+{% block content %}
+<section class="page-header">
+    <div>
+        <p class="eyebrow">Импорт</p>
+        <h1>Загрузка чеков</h1>
+    </div>
+</section>
+
+<section class="surface upload-layout">
+    <div class="dropzone" id="dropzone">
+        <label class="visually-hidden" for="fileInput">PDF-файлы чеков</label>
+        <input type="file" id="fileInput" name="pdfs" multiple accept="application/pdf" class="d-none" autocomplete="off">
+        <div class="dropzone-icon"><i class="bi bi-file-earmark-arrow-up" aria-hidden="true"></i></div>
+        <div>
+            <h2>Перетащите PDF сюда</h2>
+            <p>или нажмите, чтобы выбрать файлы</p>
+        </div>
+    </div>
+
+    <div class="upload-panel">
+        <div class="panel-title">
+            <span>Файлы</span>
+            <span id="fileCounter" class="muted">0</span>
+        </div>
+        <div id="fileList" class="file-list muted">Файлы не выбраны</div>
+
+        <button id="uploadBtn" class="btn btn-primary w-100">
+            <i class="bi bi-cloud-arrow-up" aria-hidden="true"></i>
+            Импортировать
+        </button>
+
+        <button id="gmailBtn" class="btn btn-outline-primary w-100">
+            <i class="bi bi-envelope-arrow-down" aria-hidden="true"></i>
+            Проверить почту
+        </button>
+
+        <div class="progress mt-3" id="progressContainer">
+            <div id="progressBar" class="progress-bar" role="progressbar" style="width:0%;"></div>
+        </div>
+
+        <div id="status" class="status-line" aria-live="polite"></div>
+        <div id="results" class="result-list"></div>
+    </div>
+</section>
+
+<script>
+const dropzone = document.getElementById('dropzone');
+const fileInput = document.getElementById('fileInput');
+const uploadBtn = document.getElementById('uploadBtn');
+const gmailBtn = document.getElementById('gmailBtn');
+const fileList = document.getElementById('fileList');
+const fileCounter = document.getElementById('fileCounter');
+const status = document.getElementById('status');
+const results = document.getElementById('results');
+const progressBar = document.getElementById('progressBar');
+const progressContainer = document.getElementById('progressContainer');
+
+let filesToUpload = [];
+
+function renderFileList() {
+    fileCounter.textContent = filesToUpload.length;
+    if (filesToUpload.length === 0) {
+        fileList.textContent = "Файлы не выбраны";
+        fileList.classList.add('muted');
+        return;
+    }
+
+    fileList.classList.remove('muted');
+    fileList.innerHTML = filesToUpload
+        .map(file => `<div class="file-pill"><i class="bi bi-file-earmark-pdf"></i><span>${file.name}</span></div>`)
+        .join('');
+}
+
+dropzone.addEventListener('click', () => fileInput.click());
+
+fileInput.addEventListener('change', () => {
+    filesToUpload = Array.from(fileInput.files);
+    renderFileList();
+});
+
+dropzone.addEventListener('dragover', (event) => {
+    event.preventDefault();
+    dropzone.classList.add('is-dragover');
+});
+
+dropzone.addEventListener('dragleave', () => {
+    dropzone.classList.remove('is-dragover');
+});
+
+dropzone.addEventListener('drop', (event) => {
+    event.preventDefault();
+    dropzone.classList.remove('is-dragover');
+    filesToUpload = Array.from(event.dataTransfer.files);
+    renderFileList();
+});
+
+uploadBtn.addEventListener('click', async () => {
+    if (filesToUpload.length === 0) {
+        status.innerHTML = "<span class='text-danger'>Выберите хотя бы один файл</span>";
+        return;
+    }
+
+    const formData = new FormData();
+    filesToUpload.forEach(file => formData.append('pdfs', file));
+
+    status.textContent = "Загрузка...";
+    results.innerHTML = "";
+    progressContainer.style.display = "block";
+    progressBar.style.width = "35%";
+
+    try {
+        const response = await fetch('/upload', { method: 'POST', body: formData });
+        const result = await response.json();
+        progressBar.style.width = "100%";
+
+        if (result.status === "ok") {
+            status.innerHTML = `<span class='text-success'>Готово: ${result.uploaded.length}, ошибок: ${result.errors.length}</span>`;
+            let html = "";
+            if (result.uploaded.length > 0) {
+                html += "<div class='result-block'><strong>Загружено</strong>";
+                result.uploaded.forEach(item => {
+                    html += `<div>${item.file} — ${item.message || "OK"}</div>`;
+                });
+                html += "</div>";
+            }
+            if (result.errors.length > 0) {
+                html += "<div class='result-block text-danger'><strong>Ошибки</strong>";
+                result.errors.forEach(err => {
+                    html += `<div>${err.file}: ${err.error}</div>`;
+                });
+                html += "</div>";
+            }
+            results.innerHTML = html;
+        } else {
+            status.innerHTML = "<span class='text-danger'>Ошибка загрузки</span>";
+        }
+    } catch (error) {
+        status.innerHTML = "<span class='text-danger'>Ошибка сети</span>";
+    }
+});
+
+gmailBtn.addEventListener('click', async () => {
+    status.textContent = "Проверяю почту...";
+    results.innerHTML = "";
+    gmailBtn.disabled = true;
+
+    try {
+        const response = await fetch('/gmail/fetch', { method: 'POST' });
+        const result = await response.json();
+
+        if (!response.ok || result.status !== "ok") {
+            status.innerHTML = `<span class='text-danger'>${result.message || "Не удалось проверить почту"}</span>`;
+            return;
+        }
+
+        const foundPdfCount = result.files_saved.length + (result.files_existing?.length || 0);
+        status.innerHTML = `<span class='text-success'>Проверено писем: ${result.emails_checked}. Найдено PDF: ${foundPdfCount}</span>`;
+
+        let html = "";
+        if (result.imported.length > 0) {
+            html += "<div class='result-block'><strong>Импортировано</strong>";
+            result.imported.forEach(item => {
+                html += `<div>${item.file} — ${item.message || "OK"}</div>`;
+            });
+            html += "</div>";
+        }
+        if (result.errors.length > 0) {
+            html += "<div class='result-block text-danger'><strong>Ошибки</strong>";
+            result.errors.forEach(err => {
+                html += `<div>${err.file}: ${err.error}</div>`;
+            });
+            html += "</div>";
+        }
+        if (result.skipped_files.length > 0) {
+            html += "<div class='result-block muted'><strong>Пропущено</strong>";
+            result.skipped_files.forEach(file => {
+                html += `<div>${file}</div>`;
+            });
+            html += "</div>";
+        }
+        if (!html) {
+            html = "<div class='result-block muted'>Новых PDF-вложений не найдено</div>";
+        }
+        results.innerHTML = html;
+    } catch (error) {
+        status.innerHTML = "<span class='text-danger'>Ошибка подключения к Gmail</span>";
+    } finally {
+        gmailBtn.disabled = false;
+    }
+});
+</script>
+{% endblock %}

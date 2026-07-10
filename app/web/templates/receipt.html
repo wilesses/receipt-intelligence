@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block title %}Чек №{{ receipt_id }}{% endblock %}
+{% block content %}
+<section class="page-header">
+    <div>
+        <p class="eyebrow">Детали</p>
+        <h1>Чек №{{ receipt_id }}</h1>
+    </div>
+    <a href="{{ url_for('index') }}" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-left" aria-hidden="true"></i>
+        Назад
+    </a>
+</section>
+
+{% if category_updated %}
+<div class="inline-status">Категория обновлена</div>
+{% endif %}
+
+<section class="surface">
+    <div class="receipt-summary">
+        <span>Итого</span>
+        <strong>{{ "%.2f"|format(total_sum) }} €</strong>
+    </div>
+    <div class="table-responsive">
+        <table class="table app-table align-middle">
+            <thead>
+                <tr>
+                    <th>Товар</th>
+                    <th>Категория</th>
+                    <th class="text-end">Кол-во</th>
+                    <th class="text-end">Цена</th>
+                    <th class="text-end">Статус</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in items %}
+                <tr>
+                    <td>{{ item['name'] }}</td>
+                    <td>
+                        <form method="post" action="{{ url_for('update_item_category', item_id=item['id']) }}" class="category-form">
+                            <label class="visually-hidden" for="category-{{ item['id'] }}">Категория</label>
+                            <div class="category-controls">
+                                <select
+                                    id="category-{{ item['id'] }}"
+                                    name="category"
+                                    class="form-select form-select-sm category-select"
+                                    onchange="this.form.submit()"
+                                >
+                                    {% for category in category_options %}
+                                        <option value="{{ category }}" {% if category == item['category'] %}selected{% endif %}>{{ category }}</option>
+                                    {% endfor %}
+                                </select>
+                                <label class="visually-hidden" for="new-category-{{ item['id'] }}">Новая категория</label>
+                                <input
+                                    id="new-category-{{ item['id'] }}"
+                                    name="new_category"
+                                    class="form-control form-control-sm category-new-input"
+                                    placeholder="Новая"
+                                    autocomplete="off"
+                                >
+                            </div>
+                        </form>
+                    </td>
+                    <td class="text-end">{{ "%.0f"|format(item['quantity']) }}</td>
+                    <td class="amount-cell">{{ "%.2f"|format(item['price']) }} €</td>
+                    <td class="text-end">
+                        {% if item['price_status'] %}
+                            <span
+                                class="price-status price-status-{{ item['price_status']['kind'] }}"
+                                title="{{ item['price_status']['tooltip'] }}"
+                            >
+                                {{ item['price_status']['label'] }}
+                            </span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+
+<section class="surface receipt-insights">
+    <div class="section-title">
+        <h2>Итоги по чеку</h2>
+    </div>
+    <div class="receipt-insights-grid">
+        <div>
+            <span>Всего товаров</span>
+            <strong>{{ receipt_summary.total_items }}</strong>
+        </div>
+        <div>
+            <span>Дешевле обычного</span>
+            <strong>{{ receipt_summary.cheap }}</strong>
+        </div>
+        <div>
+            <span>Дороже обычного</span>
+            <strong>{{ receipt_summary.expensive }}</strong>
+        </div>
+        <div>
+            <span>Без истории</span>
+            <strong>{{ receipt_summary.insufficient }}</strong>
+        </div>
+    </div>
+</section>
+{% endblock %}

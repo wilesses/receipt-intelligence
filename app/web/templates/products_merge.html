@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}Объединение товаров{% endblock %}
+{% block content %}
+<section class="page-header">
+    <div>
+        <p class="eyebrow">Товары</p>
+        <h1>Объединение товаров</h1>
+    </div>
+    <a href="{{ url_for('analytics') }}" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-left" aria-hidden="true"></i>
+        Аналитика
+    </a>
+</section>
+
+{% if merged_count is not none %}
+<div class="inline-status">Товары объединены: {{ merged_count }} строк обновлено</div>
+{% endif %}
+
+<section class="surface">
+    <form method="get" action="{{ url_for('products_merge') }}" class="merge-search">
+        <label class="search-control">
+            <i class="bi bi-search" aria-hidden="true"></i>
+            <input class="form-control" type="search" name="q" value="{{ query }}" placeholder="Поиск товара" autocomplete="off">
+        </label>
+        <button class="btn btn-outline-primary" type="submit">
+            <i class="bi bi-search" aria-hidden="true"></i>
+            Найти
+        </button>
+    </form>
+</section>
+
+<form method="post" action="{{ url_for('products_merge_submit') }}">
+    <input type="hidden" name="q" value="{{ query }}">
+    <section class="surface merge-panel">
+        <div class="merge-actions">
+            <label>
+                <span>Каноническое название</span>
+                <input class="form-control" type="text" name="canonical_name" placeholder="Например: Молоко 2.5%" autocomplete="off" required>
+            </label>
+            <button class="btn btn-primary" type="submit">
+                <i class="bi bi-intersect" aria-hidden="true"></i>
+                Объединить
+            </button>
+        </div>
+
+        <div class="table-responsive">
+            <table class="table app-table align-middle merge-table">
+                <thead>
+                    <tr>
+                        <th class="merge-check">
+                            <span class="visually-hidden">Выбор</span>
+                        </th>
+                        <th>Название</th>
+                        <th class="text-end">Строк</th>
+                        <th class="text-end">Чеков</th>
+                        <th>Canonical name</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for product in products %}
+                    <tr>
+                        <td class="merge-check">
+                            <input class="form-check-input" type="checkbox" name="selected_names" value="{{ product[0] }}" aria-label="Выбрать {{ product[0] }}">
+                        </td>
+                        <td>
+                            <a href="{{ url_for('item_profile', name=product[0]) }}">{{ product[0] }}</a>
+                        </td>
+                        <td class="text-end">{{ product[1] }}</td>
+                        <td class="text-end">{{ product[2] }}</td>
+                        <td class="muted-cell">{{ product[3] or '—' }}</td>
+                    </tr>
+                {% else %}
+                    <tr>
+                        <td colspan="5">
+                            <p class="empty-message">Ничего не найдено.</p>
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+</form>
+{% endblock %}

@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% block title %}Чеки{% endblock %}
+{% block content %}
+<section class="page-header">
+    <div>
+        <p class="eyebrow">Расходы</p>
+        <h1>Чеки</h1>
+    </div>
+    <div class="toolbar">
+        <div class="search-control">
+            <i class="bi bi-search" aria-hidden="true"></i>
+            <label class="visually-hidden" for="searchInput">Поиск по магазину</label>
+            <input type="search" id="searchInput" name="store_search" class="form-control" placeholder="Магазин…" autocomplete="off">
+        </div>
+        <a href="{{ url_for('upload') }}" class="btn btn-primary">
+            <i class="bi bi-plus-lg" aria-hidden="true"></i>
+            Загрузить
+        </a>
+    </div>
+</section>
+
+<section class="summary-grid" aria-label="Сводка чеков">
+    <div class="metric-card">
+        <span>Чеков</span>
+        <strong>{{ receipts|length }}</strong>
+    </div>
+    <div class="metric-card">
+        <span>Сумма</span>
+        <strong>{{ "%.2f"|format(receipts|sum(attribute=4) if receipts else 0) }} €</strong>
+    </div>
+    <div class="metric-card">
+        <span>Последний</span>
+        <strong>{{ receipts[0][2] if receipts else '—' }}</strong>
+    </div>
+</section>
+
+<section class="surface">
+    <div class="table-responsive">
+        <table id="receiptTable" class="table app-table align-middle">
+            <thead>
+                <tr>
+                    <th scope="col" data-sort="id">ID <span class="sort-icon">↕</span></th>
+                    <th scope="col">PDF</th>
+                    <th scope="col" data-sort="date">Дата <span class="sort-icon">↕</span></th>
+                    <th scope="col">Магазин</th>
+                    <th scope="col" data-sort="total" class="text-end">Сумма <span class="sort-icon">↕</span></th>
+                    <th scope="col" class="text-end">Действие</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for receipt in receipts %}
+            <tr>
+                <td class="text-muted">#{{ receipt[0] }}</td>
+                <td class="file-cell" title="{{ receipt[1] if receipt[1] else '' }}">{{ receipt[1] if receipt[1] else '—' }}</td>
+                <td>{{ receipt[2] if receipt[2] else '—' }}</td>
+                <td>{{ receipt[3] if receipt[3] else '—' }}</td>
+                <td class="amount-cell">{{ "%.2f"|format(receipt[4] if receipt[4] else 0) }} €</td>
+                <td class="text-end">
+                    <a href="{{ url_for('view_receipt', receipt_id=receipt[0]) }}" class="btn btn-outline-primary btn-sm">
+                        <i class="bi bi-eye" aria-hidden="true"></i>
+                        Открыть
+                    </a>
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    <div class="surface-footer">
+        <span id="receiptCount">Найдено чеков: {{ receipts|length }}</span>
+    </div>
+</section>
+
+<script>
+const searchInput = document.getElementById('searchInput');
+const table = document.getElementById('receiptTable');
+const tbody = table.querySelector('tbody');
+const rows = Array.from(tbody.querySelectorAll('tr'));
+const receiptCount = document.getElementById('receiptCount');
+
+updateCount(rows.length);
+
+searchInput.addEventListener('input', () => {
+    const value = searchInput.value.toLowerCase();
+    let visibleRows = 0;
+    rows.forEach(row => {
+        const storeCell = row.cells[3].textContent.toLowerCase();
+        const visible = storeCell.includes(value);
+        row.style.display = visible ? '' : 'none';
+        if (visible) visibleRows++;
+    });
+    updateCount(visibleRows);
+});
+
+const sortStates = {};
+document.querySelectorAll('#receiptTable th[data-sort]').forEach(th => {
+    th.addEventListener('click', () => {
+        const index = Array.from(th.parentNode.children).indexOf(th);
+        const type = th.dataset.sort;
+        sortStates[index] = !sortStates[index];
+
+        const sortedRows = [...rows].sort((a, b) => {
+            let valA = a.cells[index].textContent.trim().replace('#', '').replace('€', '');
+            let valB = b.cells[index].textContent.trim().replace('#', '').replace('€', '');
+
+            if (type === 'id' || type === 'total') {
+                valA = parseFloat(valA) || 0;
+                valB = parseFloat(valB) || 0;
+            } else if (type === 'date') {
+                valA = new Date(valA);
+                valB = new Date(valB);
+            }
+
+            return sortStates[index] ? (valA > valB ? 1 : -1) : (valA < valB ? 1 : -1);
+        });
+
+        tbody.innerHTML = '';
+        sortedRows.forEach(row => tbody.appendChild(row));
+        updateSortIcons(th, sortStates[index]);
+    });
+});
+
+function updateSortIcons(activeTh, ascending) {
+    document.querySelectorAll('#receiptTable th[data-sort] .sort-icon').forEach(icon => {
+        icon.textContent = '↕';
+    });
+    activeTh.querySelector('.sort-icon').textContent = ascending ? '↑' : '↓';
+}
+
+function updateCount(count) {
+    receiptCount.textContent = `Найдено чеков: ${count}`;
+}
+</script>
+{% endblock %}

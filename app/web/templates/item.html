@@ -1,0 +1,243 @@
+{% extends "base.html" %}
+{% block title %}{{ name }}{% endblock %}
+{% block content %}
+<section class="page-header">
+    <div>
+        <p class="eyebrow">Товар</p>
+        <h1>{{ name }}</h1>
+    </div>
+    <a href="{{ url_for('analytics') }}" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-left" aria-hidden="true"></i>
+        Аналитика
+    </a>
+</section>
+
+{% if request.args.get('category_updated') == '1' %}
+<div class="inline-status">Категория обновлена</div>
+{% endif %}
+
+<section class="metric-grid">
+    <div class="metric-card">
+        <span>Средняя цена</span>
+        <strong>{{ stats[0] or 0.00 }} €</strong>
+    </div>
+    <div class="metric-card">
+        <span>Мин / Макс</span>
+        <strong>{{ stats[1] or 0.00 }} / {{ stats[2] or 0.00 }} €</strong>
+    </div>
+    <div class="metric-card">
+        <span>Всего куплено</span>
+        <strong>{{ stats[3] or 0.00 }}</strong>
+    </div>
+    <div class="metric-card">
+        <span>Общая сумма</span>
+        <strong>{{ stats[4] or 0.00 }} €</strong>
+    </div>
+</section>
+
+<section class="surface price-evaluation">
+    <div class="section-title">
+        <h2>Оценка текущей цены</h2>
+    </div>
+    {% if price_evaluation.has_enough_data %}
+        <div class="price-evaluation-grid">
+            <div>
+                <span>Последняя цена</span>
+                <strong>{{ "%.2f"|format(price_evaluation.last_price) }} €</strong>
+            </div>
+            <div>
+                <span>Средняя цена</span>
+                <strong>{{ "%.2f"|format(price_evaluation.average_price) }} €</strong>
+            </div>
+            <div>
+                <span>Медианная цена</span>
+                <strong>{{ "%.2f"|format(price_evaluation.median_price) }} €</strong>
+            </div>
+            <div>
+                <span>Минимум / максимум</span>
+                <strong>{{ "%.2f"|format(price_evaluation.min_price) }} € / {{ "%.2f"|format(price_evaluation.max_price) }} €</strong>
+            </div>
+        </div>
+        <div class="price-evaluation-result">
+            <div>
+                <span>Статус</span>
+                <strong>{{ price_evaluation.status }}</strong>
+            </div>
+            <div>
+                <span>Отклонение от средней</span>
+                <strong>{{ "%+.1f"|format(price_evaluation.average_deviation) }}%</strong>
+            </div>
+            <div>
+                <span>Отклонение от медианы</span>
+                <strong>{{ "%+.1f"|format(price_evaluation.median_deviation) }}%</strong>
+            </div>
+        </div>
+    {% else %}
+        <p class="empty-message text-start">Недостаточно данных для оценки цены.</p>
+    {% endif %}
+</section>
+
+<section class="surface product-aliases">
+    <div class="section-title">
+        <h2>Алиасы товара</h2>
+    </div>
+    {% if aliases %}
+        <div class="alias-list">
+            {% for alias in aliases %}
+                <span>{{ alias }}</span>
+            {% endfor %}
+        </div>
+    {% else %}
+        <p class="empty-message text-start">Алиасов пока нет.</p>
+    {% endif %}
+</section>
+
+<section class="surface chart-card wide-chart">
+    <div class="section-title">
+        <h2>Динамика цены</h2>
+    </div>
+    <div class="chart-frame chart-frame-wide">
+        <canvas id="trendChart"></canvas>
+        <p id="trendMsg" class="empty-message" aria-live="polite"></p>
+    </div>
+</section>
+
+<section class="content-grid">
+    <div class="surface">
+        <div class="section-title">
+            <h2>Магазины</h2>
+        </div>
+        <div class="table-responsive">
+            <table class="table app-table align-middle">
+                <thead>
+                    <tr>
+                        <th>Магазин</th>
+                        <th class="text-end">Покупки</th>
+                        <th class="text-end">Сумма</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for row in per_store %}
+                    <tr>
+                        <td>{{ row[0] }}</td>
+                        <td class="text-end">{{ row[1] }}</td>
+                        <td class="amount-cell">{{ row[2] }} €</td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="surface">
+        <div class="section-title">
+            <h2>Покупки</h2>
+        </div>
+        <div class="table-responsive">
+            <table class="table app-table align-middle">
+                <thead>
+                    <tr>
+                        <th>Дата</th>
+                        <th>Магазин</th>
+                        <th>Категория</th>
+                        <th class="text-end">Кол-во</th>
+                        <th class="text-end">Цена</th>
+                        <th class="text-end">Ед.</th>
+                        <th class="text-end">Чек</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for row in rows %}
+                    <tr>
+                        <td>{{ row[0] }}</td>
+                        <td>{{ row[1] }}</td>
+                        <td>
+                            <form method="post" action="{{ url_for('update_item_category', item_id=row[5]) }}" class="category-form">
+                                <label class="visually-hidden" for="category-{{ row[5] }}">Категория</label>
+                                <div class="category-controls">
+                                    <select
+                                        id="category-{{ row[5] }}"
+                                        name="category"
+                                        class="form-select form-select-sm category-select"
+                                        onchange="this.form.submit()"
+                                    >
+                                        {% for category in category_options %}
+                                            <option value="{{ category }}" {% if category == (row[6] or 'прочее') %}selected{% endif %}>{{ category }}</option>
+                                        {% endfor %}
+                                    </select>
+                                    <label class="visually-hidden" for="new-category-{{ row[5] }}">Новая категория</label>
+                                    <input
+                                        id="new-category-{{ row[5] }}"
+                                        name="new_category"
+                                        class="form-control form-control-sm category-new-input"
+                                        placeholder="Новая"
+                                        autocomplete="off"
+                                    >
+                                </div>
+                            </form>
+                        </td>
+                        <td class="text-end">{{ row[2] }}</td>
+                        <td class="amount-cell">{{ row[3] }} €</td>
+                        <td class="amount-cell">
+                            {% if row[2] and row[2] > 0 %}
+                                {{ "%.2f"|format(row[3] / row[2]) }} €
+                            {% else %}
+                                —
+                            {% endif %}
+                        </td>
+                        <td class="text-end">
+                            <a href="{{ url_for('view_receipt', receipt_id=row[4]) }}" class="icon-link" aria-label="Открыть чек">
+                                <i class="bi bi-eye" aria-hidden="true"></i>
+                            </a>
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</section>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels"></script>
+<script>
+let trendChart;
+
+async function loadTrendChart() {
+    const res = await fetch(`/analytics/item_trend?item=${encodeURIComponent("{{ name }}")}`);
+    const data = await res.json();
+
+    if (!data || data.labels.length === 0) {
+        document.getElementById('trendMsg').textContent = "Нет данных";
+        return;
+    }
+
+    if (trendChart) trendChart.destroy();
+
+    trendChart = new Chart(document.getElementById('trendChart'), {
+        type: 'line',
+        data: {
+            labels: data.labels,
+            datasets: [{
+                label: "Цена за единицу",
+                data: data.values.map(v => (isFinite(v) && v > 0 ? v : null)),
+                borderColor: '#0f766e',
+                backgroundColor: 'rgba(15, 118, 110, .08)',
+                fill: true,
+                tension: .25,
+                spanGaps: false
+            }]
+        },
+        options: {
+            maintainAspectRatio: false,
+            responsive: true,
+            plugins: { legend: { display: false }, datalabels: { display: false } },
+            scales: { y: { beginAtZero: true } }
+        },
+        plugins: [ChartDataLabels]
+    });
+}
+
+loadTrendChart();
+</script>
+{% endblock %}

@@ -1,0 +1,42 @@
+body {
+    font-family: Arial, sans-serif;
+    margin: 20px;
+}
+header {
+    background: #007bff;
+    color: white;
+    padding: 10px;
+}
+header nav a {
+    color: white;
+    margin-right: 15px;
+    text-decoration: none;
+}
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 20px;
+}
+th, td {
+    border: 1px solid #ccc;
+    padding: 8px;
+    text-align: left;
+}
+.dropzone {
+    border: 2px dashed #007bff;
+    padding: 30px;
+    text-align: center;
+    border-radius: 10px;
+    color: #555;
+    cursor: pointer;
+}
+.dropzone.dragover { background: #f0f8ff; }
+button {
+    background: #007bff;
+    color: white;
+    border: none;
+    padding: 10px 15px;
+    cursor: pointer;
+    border-radius: 5px;
+}
+button:hover { background: #0056b3; }
