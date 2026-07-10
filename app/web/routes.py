@@ -9,6 +9,7 @@ from app.config import UPLOAD_DIR, ensure_data_dirs
 from app.db import get_all_receipts, get_connection, get_items_by_receipt
 from app.gmail_fetcher import fetch_pdf_attachments, gmail_settings
 from app.importer import process_pdf_api
+from app.product_matcher import find_similar_products
 
 
 ALLOWED_EXTENSIONS = {"pdf"}
@@ -407,6 +408,32 @@ def init_routes(app):
                 updated_count = cursor.rowcount
 
         return redirect(url_for("products_merge", q=query, merged=updated_count))
+
+    @app.route("/products/suggestions")
+    def product_suggestions():
+        query = request.args.get("q", "").strip()
+        confidence = request.args.get("confidence", "").strip()
+        try:
+            limit = min(max(int(request.args.get("limit", 50)), 10), 200)
+        except ValueError:
+            limit = 50
+
+        with get_connection() as conn:
+            suggestions = find_similar_products(conn, query=query or None, limit=limit)
+
+        if confidence in {"high", "possible"}:
+            suggestions = [
+                item for item in suggestions
+                if item["confidence"] == confidence
+            ]
+
+        return render_template(
+            "product_suggestions.html",
+            suggestions=suggestions,
+            query=query,
+            confidence=confidence,
+            limit=limit,
+        )
 
     @app.route("/item/<name>")
     def item_profile(name):

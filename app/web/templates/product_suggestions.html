@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block title %}Похожие товары{% endblock %}
+{% block content %}
+<section class="page-header">
+    <div>
+        <p class="eyebrow">Товары</p>
+        <h1>Похожие товары</h1>
+    </div>
+    <a href="{{ url_for('products_merge') }}" class="btn btn-outline-secondary">
+        <i class="bi bi-diagram-3" aria-hidden="true"></i>
+        Объединение
+    </a>
+</section>
+
+<section class="surface">
+    <form method="get" action="{{ url_for('product_suggestions') }}" class="filters-grid suggestions-filters">
+        <label>
+            <span>Поиск</span>
+            <input class="form-control" type="search" name="q" value="{{ query }}" placeholder="Название товара" autocomplete="off">
+        </label>
+        <label>
+            <span>Уверенность</span>
+            <select class="form-select" name="confidence" autocomplete="off">
+                <option value="" {% if not confidence %}selected{% endif %}>Все</option>
+                <option value="high" {% if confidence == "high" %}selected{% endif %}>Высокая вероятность</option>
+                <option value="possible" {% if confidence == "possible" %}selected{% endif %}>Возможное совпадение</option>
+            </select>
+        </label>
+        <label>
+            <span>Лимит</span>
+            <select class="form-select" name="limit" autocomplete="off">
+                {% for value in [25, 50, 100, 200] %}
+                    <option value="{{ value }}" {% if limit == value %}selected{% endif %}>{{ value }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <button class="btn btn-primary" type="submit">
+            <i class="bi bi-funnel" aria-hidden="true"></i>
+            Показать
+        </button>
+    </form>
+</section>
+
+<section class="summary-grid" aria-label="Сводка похожих товаров">
+    <div class="metric-card">
+        <span>Найдено пар</span>
+        <strong id="suggestionCount">{{ suggestions|length }}</strong>
+    </div>
+    <div class="metric-card">
+        <span>Высокая вероятность</span>
+        <strong>{{ suggestions|selectattr("confidence", "equalto", "high")|list|length }}</strong>
+    </div>
+    <div class="metric-card">
+        <span>Возможное совпадение</span>
+        <strong>{{ suggestions|selectattr("confidence", "equalto", "possible")|list|length }}</strong>
+    </div>
+</section>
+
+<section class="suggestions-list" id="suggestionsList">
+    {% for item in suggestions %}
+    <article class="surface suggestion-card" data-card>
+        <div class="suggestion-card-header">
+            <div>
+                <span class="confidence-badge confidence-{{ item.confidence }}">
+                    {{ "Высокая вероятность" if item.confidence == "high" else "Возможное совпадение" }}
+                </span>
+                <strong>{{ "%.2f"|format(item.score) }}%</strong>
+            </div>
+            <button class="btn btn-outline-secondary btn-sm" type="button" data-dismiss>
+                <i class="bi bi-clock" aria-hidden="true"></i>
+                Отложить
+            </button>
+        </div>
+
+        <div class="suggestion-products">
+            <div>
+                <span>Левый товар</span>
+                <h2>{{ item.left_name }}</h2>
+                <p>{{ item.left_count }} строк · {{ item.left_receipt_count }} чеков · {{ item.left_category or "без категории" }}</p>
+            </div>
+            <div>
+                <span>Правый товар</span>
+                <h2>{{ item.right_name }}</h2>
+                <p>{{ item.right_count }} строк · {{ item.right_receipt_count }} чеков · {{ item.right_category or "без категории" }}</p>
+            </div>
+        </div>
+
+        <ul class="suggestion-reasons">
+            {% for reason in item.reasons %}
+                <li>{{ reason }}</li>
+            {% endfor %}
+        </ul>
+
+        <details class="technical-details">
+            <summary>Нормализованные названия</summary>
+            <div>{{ item.left_normalized }}</div>
+            <div>{{ item.right_normalized }}</div>
+        </details>
+
+        <div class="suggestion-actions">
+            <a class="btn btn-primary" href="{{ url_for('products_merge', q=item.merge_query) }}">
+                <i class="bi bi-box-arrow-up-right" aria-hidden="true"></i>
+                Открыть объединение
+            </a>
+        </div>
+    </article>
+    {% else %}
+    <section class="surface">
+        <p class="empty-message">Похожие товары не найдены.</p>
+    </section>
+    {% endfor %}
+</section>
+
+<script>
+document.querySelectorAll('[data-dismiss]').forEach(button => {
+    button.addEventListener('click', () => {
+        const card = button.closest('[data-card]');
+        if (!card) return;
+        card.remove();
+        const count = document.querySelectorAll('[data-card]').length;
+        document.getElementById('suggestionCount').textContent = count;
+    });
+});
+</script>
+{% endblock %}

@@ -2,6 +2,7 @@ import sqlite3
 from collections.abc import Iterable
 
 from app.config import DB_PATH, ensure_data_dirs
+from app.product_normalizer import normalize_product_name
 
 
 def get_connection() -> sqlite3.Connection:
@@ -29,6 +30,7 @@ def create_tables() -> None:
                 receipt_id INTEGER NOT NULL,
                 name TEXT NOT NULL,
                 canonical_name TEXT,
+                normalized_name TEXT,
                 quantity REAL NOT NULL DEFAULT 1,
                 price REAL NOT NULL DEFAULT 0,
                 category TEXT NOT NULL DEFAULT 'прочее',
@@ -41,6 +43,8 @@ def create_tables() -> None:
             cursor.execute("ALTER TABLE items ADD COLUMN category TEXT DEFAULT 'прочее'")
         if "canonical_name" not in item_columns:
             cursor.execute("ALTER TABLE items ADD COLUMN canonical_name TEXT")
+        if "normalized_name" not in item_columns:
+            cursor.execute("ALTER TABLE items ADD COLUMN normalized_name TEXT")
 
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_receipts_date ON receipts(date)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_receipts_number ON receipts(receipt_number)")
@@ -49,6 +53,7 @@ def create_tables() -> None:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_items_category ON items(category)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_items_name ON items(name)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_items_canonical_name ON items(canonical_name)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_items_normalized_name ON items(normalized_name)")
         conn.commit()
 
 
@@ -67,19 +72,22 @@ def add_receipt_with_items(date, store, total, receipt_number, items: Iterable[d
             """, (date, store, total or 0, receipt_number))
             receipt_id = cursor.lastrowid
 
-            cursor.executemany("""
-                INSERT INTO items (receipt_id, name, quantity, price, category)
-                VALUES (?, ?, ?, ?, ?)
-            """, [
-                (
+            prepared_items = []
+            for item in items:
+                name = item.get("name") or "Unknown"
+                prepared_items.append((
                     receipt_id,
-                    item.get("name") or "Unknown",
+                    name,
+                    normalize_product_name(name),
                     item.get("quantity") or 1,
                     item.get("price") or 0,
                     item.get("category") or "прочее",
-                )
-                for item in items
-            ])
+                ))
+
+            cursor.executemany("""
+                INSERT INTO items (receipt_id, name, normalized_name, quantity, price, category)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, prepared_items)
             conn.commit()
             return True
     except sqlite3.IntegrityError:

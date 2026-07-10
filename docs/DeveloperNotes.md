@@ -9,9 +9,11 @@
 5. `app/db.py` - схема и базовые операции с SQLite.
 6. `app/importer.py` - импорт PDF, OCR, подготовка данных.
 7. `app/receipt_parser.py` - парсинг текста чека.
-8. `app/category_keywords.py` - правила категоризации.
-9. `app/analytics_service.py` - данные для графиков.
-10. `app/web/templates/` - UI.
+8. `app/product_normalizer.py` - нормализация названий товаров.
+9. `app/product_matcher.py` - предложения похожих товаров.
+10. `app/category_keywords.py` - правила категоризации.
+11. `app/analytics_service.py` - данные для графиков.
+12. `app/web/templates/` - UI.
 
 ## Самые важные файлы
 
@@ -22,6 +24,9 @@
 - `app/db.py` - схема, подключение, вставка чеков.
 - `app/importer.py` - PDF/OCR/import pipeline.
 - `app/receipt_parser.py` - Maxima/Rimi parsing.
+- `app/product_normalizer.py` - `normalized_name` и признаки упаковки.
+- `app/product_matcher.py` - RapidFuzz suggestions без автоматического merge.
+- `app/backfill_normalized_names.py` - безопасное заполнение `normalized_name`.
 - `app/category_keywords.py` - CategoryEngine.
 - `app/analytics_service.py` - агрегаты для `/analytics`.
 - `app/gmail_fetcher.py` - Gmail IMAP.
@@ -96,6 +101,47 @@ return jsonify(data)
 
 Если аналитика относится к чеку, смотреть `build_receipt_price_analysis()` и `receipt.html`.
 
+## Как работает Product Normalizer
+
+`app/product_normalizer.py:normalize_product_name()`:
+
+- обрабатывает `None` и пустые строки;
+- приводит название к lowercase;
+- заменяет десятичную запятую между цифрами на точку;
+- унифицирует пробелы;
+- удаляет лишнюю пунктуацию;
+- сохраняет латинские и латышские буквы, цифры и `%`;
+- приводит `l` к `ml`, `kg` к `g`, `gr` к `g`, `gab.` к `gab`;
+- удаляет только allowlist технических токенов: `d`, `pet`, `sk`.
+
+Функция не удаляет бренд, вкус, вариант, жирность, крепость, размер упаковки, объем или массу.
+
+`extract_product_features()` извлекает только:
+
+- `volume_ml`;
+- `weight_g`;
+- `percentage`.
+
+Бренд, вкус, тип товара и категория намеренно не определяются.
+
+## Как работает Product Suggestions
+
+Route `/products/suggestions` находится в `app/web/routes.py:product_suggestions()`.
+
+Данные строит `app/product_matcher.py:find_similar_products()`:
+
+- агрегирует уникальные варианты товаров из `items`;
+- использует `normalized_name`, если поле заполнено;
+- если `normalized_name` пустой, вычисляет его из `items.name` на лету;
+- делает token buckets для shortlist;
+- считает RapidFuzz score через `fuzz.token_set_ratio()`;
+- показывает только score от `88`;
+- `95+` считается `high`, `88-94.99` считается `possible`.
+
+Hard guards блокируют пары с разным объемом, массой, процентом или явными разными вариантами вроде `zero/original`, `cheese/bacon`.
+
+Страница не выполняет POST merge и не меняет `canonical_name`.
+
 ## Как добавить новый parser
 
 Текущий вход: `app/receipt_parser.py:parse_receipt(text)`.
@@ -148,6 +194,8 @@ UI-цвет категории находится в `app/web/app.py:category_co
 - `app/importer.py:prepare_receipt_data()` - связывает PDF extraction, parser, categorization и fallback total.
 - `app/receipt_parser.py:parse_receipt()` - решает, какой parser использовать.
 - `app/category_keywords.py:categorize_from_name()` - влияет на все будущие импорты и ручную перекатегоризацию.
+- `app/product_normalizer.py:normalize_product_name()` - влияет на новые `items.normalized_name`, backfill и suggestions.
+- `app/product_matcher.py:_blocked()` - отвечает за безопасность предложений похожих товаров.
 - `PRODUCT_NAME_EXPR` в `app/web/routes.py` и `app/analytics_service.py` - влияет на аналитику, товары, профили и объединение.
 - `/products/merge` - массово обновляет `canonical_name`.
 - `app/gmail_fetcher.py:gmail_settings()` - влияет на то, какие письма и файлы будут импортированы.
@@ -159,6 +207,7 @@ UI-цвет категории находится в `app/web/app.py:category_co
 - Изменение `receipt_number` может повлиять на дубликаты.
 - Изменение категорий может изменить историческую аналитику после перекатегоризации.
 - Изменение `canonical_name` меняет группировку товаров во всей аналитике.
+- Изменение `normalized_name` меняет только suggestions и будущий Product Engine, но не текущую аналитику.
 - Изменение `price` или `quantity` меняет цену за единицу, топ товаров и оценку выгодности.
 - Изменение схемы БД может не примениться к старой базе, если используется `CREATE TABLE IF NOT EXISTS`.
 - Фактическая старая БД может иметь constraints, отличные от новой схемы в коде.
@@ -171,5 +220,5 @@ UI-цвет категории находится в `app/web/app.py:category_co
 - Таблица аудита ручных изменений категорий не найдена.
 - Таблица ошибок категоризации не найдена.
 - Явный парсер Lidl не найден.
-- Документированная API-схема JSON endpoint не найдена до создания этих docs.
-
+- Таблица `products` не создавалась.
+- Таблица rejected matches не создавалась.

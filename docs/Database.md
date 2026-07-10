@@ -98,6 +98,7 @@ CREATE INDEX idx_receipts_store ON receipts(store);
 | `price` | `REAL` | да | нет | нет | Итоговая цена товарной строки. |
 | `category` | `TEXT` | да | нет | нет | Категория товара. Обычно назначается `categorize_from_name()`. |
 | `canonical_name` | `TEXT` | да | нет | нет | Ручное объединенное название товара. Используется аналитикой вместо `name`, если заполнено. |
+| `normalized_name` | `TEXT` | да | нет | нет | Нормализованное название для Product Normalizer и RapidFuzz suggestions. Не заменяет `name` и не влияет на `canonical_name`. |
 
 ### Поля по текущему коду создания новой таблицы
 
@@ -109,6 +110,7 @@ CREATE TABLE IF NOT EXISTS items (
     receipt_id INTEGER NOT NULL,
     name TEXT NOT NULL,
     canonical_name TEXT,
+    normalized_name TEXT,
     quantity REAL NOT NULL DEFAULT 1,
     price REAL NOT NULL DEFAULT 0,
     category TEXT NOT NULL DEFAULT 'прочее',
@@ -116,7 +118,7 @@ CREATE TABLE IF NOT EXISTS items (
 )
 ```
 
-`create_tables()` также добавляет `category` и `canonical_name`, если этих колонок нет в старой базе.
+`create_tables()` также добавляет `category`, `canonical_name` и `normalized_name`, если этих колонок нет в старой базе.
 
 ### Primary key
 
@@ -148,6 +150,7 @@ CREATE INDEX idx_items_receipt_id ON items(receipt_id);
 CREATE INDEX idx_items_category ON items(category);
 CREATE INDEX idx_items_name ON items(name);
 CREATE INDEX idx_items_canonical_name ON items(canonical_name);
+CREATE INDEX idx_items_normalized_name ON items(normalized_name);
 ```
 
 ### Частое использование
@@ -155,6 +158,7 @@ CREATE INDEX idx_items_canonical_name ON items(canonical_name);
 - `receipt_id`: загрузка позиций конкретного чека.
 - `name`: поиск, отображение исходного названия, автодополнение.
 - `canonical_name`: объединение похожих товаров. В аналитике используется выражение:
+- `normalized_name`: поиск похожих товаров в `app/product_matcher.py`.
 
 ```sql
 COALESCE(NULLIF(items.canonical_name, ''), items.name)
@@ -170,6 +174,7 @@ COALESCE(NULLIF(items.canonical_name, ''), items.name)
 - `quantity`: цена за единицу в `get_item_trend()`, `build_price_evaluation()`, `build_receipt_price_analysis()`.
 - `category`: фильтр и группировка категорий.
 - `name` и `canonical_name`: группировка товаров, профиль товара, автодополнение.
+- `normalized_name`: не используется существующей аналитикой; используется только Product Suggestions.
 - `receipt_id`: join с `receipts`.
 
 ## Таблица `sqlite_sequence`
@@ -208,6 +213,7 @@ items
   receipt_id INTEGER
   name TEXT
   canonical_name TEXT
+  normalized_name TEXT
   quantity REAL
   price REAL
   category TEXT
@@ -223,8 +229,9 @@ items
 | date             |          | PK id                |
 | store            |          | name                 |
 | total            |          | canonical_name       |
-| receipt_number   |          | quantity             |
+| receipt_number   |          | normalized_name      |
 +------------------+          | price                |
+                              | quantity             |
                               | category             |
                               +----------------------+
 ```
@@ -241,11 +248,30 @@ SELECT id FROM receipts WHERE receipt_number = ?;
 INSERT INTO receipts (date, store, total, receipt_number)
 VALUES (?, ?, ?, ?);
 
-INSERT INTO items (receipt_id, name, quantity, price, category)
-VALUES (?, ?, ?, ?, ?);
+INSERT INTO items (receipt_id, name, normalized_name, quantity, price, category)
+VALUES (?, ?, ?, ?, ?, ?);
 ```
 
-`canonical_name` при импорте не заполняется.
+`normalized_name` считается из `items.name` через `normalize_product_name()`. `canonical_name` при импорте не заполняется.
+
+### Backfill normalized_name
+
+Скрипт `app/backfill_normalized_names.py` выбирает только строки:
+
+```sql
+SELECT id, name
+FROM items
+WHERE normalized_name IS NULL OR TRIM(normalized_name) = ''
+ORDER BY id
+```
+
+Обычный режим обновляет только `normalized_name`:
+
+```sql
+UPDATE items SET normalized_name = ? WHERE id = ?
+```
+
+Dry-run ничего не записывает.
 
 ### Объединение товаров
 
@@ -266,4 +292,3 @@ WHERE name IN (...)
 ```sql
 UPDATE items SET category = ? WHERE id = ?;
 ```
-

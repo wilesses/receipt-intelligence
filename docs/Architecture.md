@@ -18,6 +18,7 @@ Receipt Tracker v2 собирает PDF-чеки, извлекает из них
 - SQLite через стандартный модуль `sqlite3`: `app/db.py`.
 - pdfplumber для чтения текстового слоя PDF: `app/importer.py`.
 - Poppler `pdftoppm` и Tesseract для OCR, если PDF выглядит как скан: `app/importer.py`.
+- RapidFuzz для безопасных предложений похожих товаров: `app/product_matcher.py`.
 - python-dotenv для загрузки `.env` в Gmail-импорте: `app/gmail_fetcher.py`.
 - imaplib/email из стандартной библиотеки для Gmail IMAP.
 - Bootstrap, Bootstrap Icons, Chart.js и chartjs-plugin-datalabels через CDN в шаблонах.
@@ -34,6 +35,9 @@ reciept_tracker_v2/
     db.py
     importer.py
     receipt_parser.py
+    product_normalizer.py
+    product_matcher.py
+    backfill_normalized_names.py
     category_keywords.py
     analytics_service.py
     analytics.py
@@ -104,6 +108,7 @@ reciept_tracker_v2/
 - `/analytics/item_trend` - JSON динамики цены товара;
 - `/autocomplete/item_names` - автодополнение товаров;
 - `/products/merge` - объединение названий товаров через `canonical_name`;
+- `/products/suggestions` - предложения похожих товаров без автоматического объединения;
 - `/item/<name>` - профиль товара;
 - `/receipt/<int:receipt_id>` - страница чека;
 - `/item/<int:item_id>/category` - ручное обновление категории позиции.
@@ -127,6 +132,7 @@ reciept_tracker_v2/
 - `app/web/routes.py:view_receipt()`;
 - `app/web/routes.py:products_merge()`;
 - `app/web/routes.py:products_merge_submit()`.
+- `app/product_matcher.py:find_similar_products()`.
 
 ## Жизненный цикл данных
 
@@ -226,6 +232,26 @@ Maxima:
 
 Если совпадений нет, категория становится `прочее`.
 
+### Нормализация товара
+
+Product Normalizer находится в `app/product_normalizer.py`.
+
+Функции:
+
+- `normalize_product_name(name)` - детерминированно приводит название к форме для сравнения;
+- `extract_product_features(normalized_name)` - извлекает `volume_ml`, `weight_g`, `percentage`.
+
+Нормализация не меняет `items.name`, `items.canonical_name` и `items.category`. При новых импортах `app/db.py:add_receipt_with_items()` заполняет только новое поле `items.normalized_name`.
+
+Для существующих данных создан отдельный dry-run/backfill скрипт:
+
+```text
+python -m app.backfill_normalized_names --dry-run
+python -m app.backfill_normalized_names
+```
+
+Обычный backfill не запускается автоматически.
+
 ### SQLite
 
 `app/importer.py:process_pdf_api()`:
@@ -240,6 +266,8 @@ Maxima:
 - проверяет дубликат по `receipt_number`;
 - вставляет строку в `receipts`;
 - вставляет позиции в `items`.
+
+Вставка новых `items` также сохраняет `normalized_name = normalize_product_name(name)`. `canonical_name` при импорте остается `NULL`.
 
 ### Analytics
 
@@ -278,4 +306,18 @@ Maxima:
 - `item.html` показывает профиль товара, алиасы, цену за единицу и историю покупок;
 - `receipt.html` показывает позиции чека и статус цены;
 - `products_merge.html` обновляет `canonical_name`.
+- `product_suggestions.html` показывает пары похожих товаров и ведет в существующее объединение.
 
+### Product Suggestions
+
+`app/product_matcher.py:find_similar_products(conn, query=None, limit=100)` строит предложения только по уникальным агрегированным товарам, а не по всем строкам `items` попарно.
+
+Используются:
+
+- `normalized_name`;
+- `extract_product_features()`;
+- `rapidfuzz.fuzz.token_set_ratio()`;
+- предварительные token buckets;
+- hard guards по объему, массе, проценту и вариантам товара.
+
+Route `/products/suggestions` только показывает кандидатов. Он не присваивает `canonical_name`, не меняет `items.name`, не создает `products` table и не делает merge.
