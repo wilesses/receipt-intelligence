@@ -2,6 +2,7 @@ import json
 import re
 import tempfile
 import unittest
+from datetime import date
 from pathlib import Path
 
 import app.db as db
@@ -15,6 +16,7 @@ class UIShellTests(unittest.TestCase):
         db.DB_PATH = Path(self.tmpdir.name) / "test.db"
         self.app = create_app()
         self.app.config["TESTING"] = True
+        self.app.config["TODAY_PROVIDER"] = lambda: date(2026, 7, 14)
         self.client = self.app.test_client()
 
     def tearDown(self):
@@ -749,6 +751,57 @@ class UIShellTests(unittest.TestCase):
         self.assertIn('.analytics-chart-frame-trend[data-state="empty"]', css)
         self.assertIn("@media (max-width: 560px)", css)
         self.assertIn("@media (prefers-reduced-motion: reduce)", css)
+
+
+    def test_receipt_detail_renders_paid_total_piece_and_weighted_semantics(self):
+        db.add_receipt_with_items(
+            "2026-08-08",
+            "MAXIMA",
+            3.63,
+            "receipt-price-semantics",
+            [
+                {
+                    "name": "NONGSHIM 120g",
+                    "quantity": 2,
+                    "quantity_unit": "piece",
+                    "price": 3.10,
+                    "line_total": 3.10,
+                    "unit_price": 1.55,
+                    "source": "parser",
+                },
+                {
+                    "name": "Sīpoli 45+ kg",
+                    "quantity": .58,
+                    "quantity_unit": "kg",
+                    "price": .53,
+                    "line_total": .53,
+                    "unit_price": .91,
+                    "source": "parser",
+                },
+            ],
+        )
+
+        html = self.client.get("/receipt/1").get_data(as_text=True)
+
+        self.assertIn("Итого за позицию", html)
+        self.assertIn("2 шт. · 1,55 €/шт. · итого 3,10 €", html)
+        self.assertIn("0,580 кг · 0,91 €/кг · итого 0,53 €", html)
+        self.assertNotIn('data-label="Цена"', html)
+
+    def test_receipt_detail_uses_legacy_price_when_line_total_is_null(self):
+        db.add_receipt_with_items(
+            "2026-08-08",
+            "MAXIMA",
+            2.40,
+            "legacy-total-fallback",
+            [{"name": "Legacy item", "quantity": 1, "price": 2.40}],
+        )
+        with db.get_connection() as conn:
+            conn.execute("UPDATE items SET line_total = NULL WHERE receipt_id = 1")
+            conn.commit()
+
+        html = self.client.get("/receipt/1").get_data(as_text=True)
+        self.assertIn("итого 2,40 €", html)
 
 
 if __name__ == "__main__":

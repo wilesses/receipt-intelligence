@@ -1,4 +1,5 @@
 import os
+from datetime import date
 
 from flask import Flask
 
@@ -36,6 +37,7 @@ def create_app():
     create_tables()
     app = Flask(__name__)
     app.secret_key = os.getenv("SECRET_KEY", "receipt-tracker-dev")
+    app.config.setdefault("TODAY_PROVIDER", date.today)
     init_routes(app)
     app.jinja_env.globals.update(
         category_color=category_color,

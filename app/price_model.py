@@ -1,4 +1,5 @@
 from dataclasses import asdict, dataclass, field
+from decimal import Decimal, ROUND_HALF_UP
 import re
 
 QUANTITY_UNITS = {"piece", "kg", "g", "l", "ml", "unknown"}
@@ -67,14 +68,28 @@ def extract_package_size(name: str | None, normalized_name: str | None = None) -
     raw = (name or "").lower()
     unit_pattern = r"(?:kg|ml|gr|g|l|gab|gb|pcs|pc|pieces|piece)"
 
-    if re.search(rf"\b\d+\s*[xх×]\s*\d+(?:[.,]\d+)?\s*{unit_pattern}\b", raw) or re.search(
-        r"\b\d+\s*\+\s*\d+\b", raw
-    ):
+    if re.search(rf"\b\d+\s*[xх×]\s*\d+(?:[.,]\d+)?\s*{unit_pattern}\b", raw):
         return None, None, ["multipack_unresolved"]
-    if re.search(rf"\d+\s*,\s+\d+\s*{unit_pattern}\b", raw) or re.search(
-        rf"\d+\s*\+\s*{unit_pattern}\b", raw
-    ):
+
+    age_match = re.search(r"(?<!\w)(\d{1,2})\+\s*(\d+(?:[.,]\d+)?)\s*(g|ml)\b", raw)
+    if age_match:
+        age = int(age_match.group(1))
+        if not 1 <= age <= 36:
+            return None, None, ["age_package_ambiguous"]
+        without_age_package = raw[:age_match.start()] + raw[age_match.end():]
+        if re.search(rf"(?<![\w+])\d+(?:[.,]\d+)?\s*{unit_pattern}\b", without_age_package):
+            return None, None, ["age_package_ambiguous"]
+        size = float(age_match.group(2).replace(",", "."))
+        if size <= 0 or size > 20000:
+            return None, None, ["age_package_ambiguous"]
+        return size, age_match.group(3), []
+
+    if re.search(rf"\b\d+\s*\++\s*\d+(?:[.,]\d+)?\s*(?:g|ml)\b", raw):
+        return None, None, ["age_package_ambiguous"]
+    if re.search(rf"\d+\s*,\s+\d+\s*{unit_pattern}\b", raw):
         return None, None, ["ambiguous_package_size"]
+    if re.search(rf"\d+\s*\+\s*{unit_pattern}\b", raw):
+        return None, None, ["weighted_measurement_ambiguous"]
     if re.search(rf"[^\W\d_]\d+(?:[.,]\d+)?\s*{unit_pattern}\b", raw):
         return None, None, ["ambiguous_package_size"]
 
@@ -129,14 +144,26 @@ def _provided_package(package_size, package_unit: str | None) -> tuple[float | N
     return None, None
 
 
+def _price_difference(quantity: float, unit_price: float, line_total: float) -> Decimal:
+    return abs(Decimal(str(quantity)) * Decimal(str(unit_price)) - Decimal(str(line_total)))
+
+
+def _effective_unit_price(quantity: float, line_total: float) -> float:
+    value = Decimal(str(line_total)) / Decimal(str(quantity))
+    return float(value.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP))
+
+
 def _prices_match(quantity: float, unit_price: float | None, line_total: float) -> bool:
     if quantity <= 0 or unit_price is None or line_total <= 0:
         return False
-    return abs(quantity * unit_price - line_total) <= max(0.02, line_total * 0.02)
+    return _price_difference(quantity, unit_price, line_total) <= Decimal("0.02")
 
 
 def _terminal_weight_unit(name: str | None) -> str | None:
-    match = re.search(r"\b(kg|l)\s*$", (name or "").strip().lower())
+    match = re.search(
+        r"\b(kg|l)(?:\s+\d+\.\s*šķ\.)?\s*$",
+        (name or "").strip().lower(),
+    )
     return match.group(1) if match else None
 
 
@@ -196,8 +223,7 @@ def validate_price_data(data: ParsedPriceData) -> list[str]:
     if data.quantity_unit == "unknown":
         warnings.append("unknown_quantity_unit")
     if data.unit_price and data.quantity > 0:
-        expected = data.quantity * data.unit_price
-        if abs(expected - data.line_total) > max(0.02, data.line_total * 0.02):
+        if _price_difference(data.quantity, data.unit_price, data.line_total) > Decimal("0.02"):
             warnings.append("line_total_unit_price_mismatch")
     return sorted(set(warnings))
 
@@ -219,12 +245,21 @@ def derive_price_data(
     qty = 1 if parsed_qty is None else parsed_qty
     total = 0 if parsed_total is None else parsed_total
     unit = normalize_quantity_unit(quantity_unit)
-    parsed_unit_price = _as_float(unit_price)
-    provided_unit_price = parsed_unit_price
-    if parsed_unit_price is None and parsed_total is not None and qty > 0 and total >= 0:
-        parsed_unit_price = round(total / qty, 4)
+    provided_unit_price = _as_float(unit_price)
+    parsed_unit_price = (
+        _effective_unit_price(qty, total)
+        if parsed_total is not None and qty > 0 and total >= 0
+        else provided_unit_price
+    )
 
     warnings = []
+    if (
+        provided_unit_price is not None
+        and parsed_total is not None
+        and qty > 0
+        and not _prices_match(qty, provided_unit_price, total)
+    ):
+        warnings.append("line_total_unit_price_mismatch")
     service_line = is_service_line(name)
     if service_line:
         warnings.append("service_line")
@@ -238,8 +273,20 @@ def derive_price_data(
     final_package_unit = supplied_unit if supplied_unit is not None else inferred_unit
 
     fatal_name = any(warning in {"parser_contamination", "multipack_unresolved"} for warning in warnings)
-    fatal_package = any(warning in {"ambiguous_package_size", "invalid_package_size"} for warning in warnings)
+    fatal_package = any(warning in {
+        "age_package_ambiguous",
+        "ambiguous_package_size",
+        "invalid_package_size",
+        "weighted_measurement_ambiguous",
+    } for warning in warnings)
     physical_unit = unit in {"kg", "g", "l", "ml"}
+    weighted_unit = _terminal_weight_unit(name)
+    weighted_evidence = (
+        qty > 0
+        and not float(qty).is_integer()
+        and weighted_unit is not None
+        and _prices_match(qty, provided_unit_price, total)
+    )
     if service_line:
         unit = "unknown"
         final_package_size = None
@@ -247,7 +294,7 @@ def derive_price_data(
         normalized_unit_price, normalized_price_unit = None, "unknown"
         confidence = None
         result_source = "service_line"
-    elif fatal_name or (fatal_package and supplied_size is None and not physical_unit):
+    elif fatal_name or (fatal_package and supplied_size is None and not physical_unit and not weighted_evidence):
         final_package_size = None
         final_package_unit = None
         normalized_unit_price, normalized_price_unit = None, "unknown"
@@ -265,10 +312,9 @@ def derive_price_data(
         elif (
             qty > 0
             and not float(qty).is_integer()
-            and _terminal_weight_unit(name)
-            and _prices_match(qty, provided_unit_price, total)
+            and weighted_evidence
         ):
-            unit = _terminal_weight_unit(name) or "unknown"
+            unit = weighted_unit or "unknown"
             confidence = 0.75
             result_source = "weighted_inference"
         elif qty > 0 and float(qty).is_integer() and final_package_size and parsed_total is not None and total > 0:
@@ -307,6 +353,8 @@ def derive_price_data(
         warnings=warnings,
     )
     data.warnings = validate_price_data(data)
+    if "line_total_unit_price_mismatch" in data.warnings and data.confidence is not None:
+        data.confidence = min(data.confidence, 0.70)
     return data
 
 

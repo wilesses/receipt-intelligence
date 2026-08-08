@@ -97,7 +97,7 @@
             <summary>Как сопоставляется цена</summary>
             <dl>
                 <div>
-                    <dt>Цена упаковки</dt>
+                    <dt>Итого за позицию</dt>
                     <dd>
                         {% if latest_price_model.line_total %}
                             {{ "%.2f"|format(latest_price_model.line_total) }} €
@@ -105,7 +105,7 @@
                     </dd>
                 </div>
                 <div>
-                    <dt>Нормализованная цена</dt>
+                    <dt>Сопоставимая цена</dt>
                     <dd>
                         {% if latest_price_model.normalized_unit_price %}
                             {{ "%.2f"|format(latest_price_model.normalized_unit_price) }}
@@ -114,7 +114,7 @@
                     </dd>
                 </div>
                 <div>
-                    <dt>Упаковка</dt>
+                    <dt>Размер упаковки</dt>
                     <dd>
                         {% if latest_price_model.package_size %}
                             {{ "%.0f"|format(latest_price_model.package_size) }} {{ latest_price_model.package_unit }}
@@ -122,10 +122,22 @@
                     </dd>
                 </div>
                 <div>
-                    <dt>Цена за строку</dt>
+                    <dt>Оплачено за единицу</dt>
                     <dd>
                         {% if latest_price_model.unit_price %}
                             {{ "%.2f"|format(latest_price_model.unit_price) }} €
+                        {% else %}—{% endif %}
+                    </dd>
+                </div>
+                <div>
+                    <dt>Источник нормализации</dt>
+                    <dd>{{ latest_price_model.source or "—" }}</dd>
+                </div>
+                <div>
+                    <dt>Уверенность нормализации</dt>
+                    <dd>
+                        {% if latest_price_model.confidence is not none %}
+                            {{ "%.0f"|format(latest_price_model.confidence * 100) }}%
                         {% else %}—{% endif %}
                     </dd>
                 </div>
@@ -148,7 +160,7 @@
     <div class="purchase-register-heading" aria-hidden="true">
         <span>Покупка</span>
         <span>Количество</span>
-        <span>Цена</span>
+        <span>Итого за позицию</span>
         <span>Цена за единицу</span>
         <span>Источник</span>
     </div>
@@ -167,11 +179,11 @@
                             <dd>{{ row[2] or "—" }}</dd>
                         </div>
                         <div class="purchase-price">
-                            <dt>Цена</dt>
+                            <dt>Итого за позицию</dt>
                             <dd>{{ "%.2f"|format(row[3] or 0) }} €</dd>
                         </div>
                         <div class="purchase-normalized">
-                            <dt>Цена за единицу</dt>
+                            <dt>Сопоставимая цена</dt>
                             <dd>
                                 {% if row[10] and row[11] and row[11] != 'unknown' %}
                                     {{ "%.2f"|format(row[10]) }}

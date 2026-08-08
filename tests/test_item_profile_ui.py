@@ -183,5 +183,23 @@ class ItemProfileWorkspaceTests(unittest.TestCase):
             self.assertIn(contract, css)
 
 
+    def test_product_dossier_uses_price_model_semantic_labels(self):
+        product = "Semantic labels product 500g"
+        self.add_purchase(product, price=3.10, normalized_price=6.20, package_size=500, package_unit="g")
+        html = self.client.get(self.item_url(product)).get_data(as_text=True)
+
+        for label in (
+            "Итого за позицию",
+            "Оплачено за единицу",
+            "Размер упаковки",
+            "Сопоставимая цена",
+            "Источник нормализации",
+            "Уверенность нормализации",
+        ):
+            self.assertIn(label, html)
+        self.assertNotIn("Цена упаковки", html)
+        self.assertNotIn("Цена за строку", html)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -136,6 +136,9 @@ atl., gala cena
 X\s+([\d,]+)
 ```
 
+- явный `gab.`/`gb.` после количества задает `quantity_unit = piece`; без явного маркера единица остается `unknown`;
+- первое число перед `X` сохраняется как печатное ценовое доказательство для Price Model;
+
 - цена сначала ищется в следующих двух строках с `cena ar atlaidi`;
 - если скидочной цены нет, цена берется из конца товарной строки:
 
@@ -287,7 +290,22 @@ Pipeline:
 9. `receipt_number = Path(file_path).stem`.
 10. `add_receipt_with_items(...)`.
 
-Price Model не меняет regex парсеров. Rimi parser передает `quantity_unit` (`gab` или `kg`) и `unit_price`, если они найдены. Maxima parser пока передает `quantity_unit = "unknown"`. В обоих случаях `price` остается итоговой суммой товарной строки.
+Parser Hardening v2 сохраняет существующие merchant branches. Rimi передает `quantity_unit` (`gab` или `kg`) и печатную цену перед скидкой. Maxima передает `piece` только при явном `gab.`/`gb.`, иначе `unknown`, а также печатную цену перед `X`.
+
+`derive_price_data()` приводит новые данные к общему контракту:
+
+- `line_total` — оплаченный итог строки после скидки;
+- `unit_price = line_total / quantity` с округлением до 4 знаков;
+- арифметический конфликт печатной цены определяется с абсолютным допуском €0.02 и ограничивает confidence ниже 0.75;
+- `normalized_unit_price` всегда считается от оплаченного `line_total`;
+- при сохранении `items.price == items.line_total`.
+
+Measurement Parsing различает узкие формы:
+
+- age/package `1–36 + size g|ml`: `6+110g` и `6+ 110g` дают упаковку 110 g, возраст остается в имени;
+- `x`, `х`, `×` multipack остается unresolved с `multipack_unresolved`;
+- `45+ kg` не становится упаковкой 45000 g; fractional quantity с terminal `kg`/`l`, допустимым `2. šķ.` suffix и согласованной печатной арифметикой может получить `weighted_inference`;
+- warnings остаются transient; Price Quality независимо проверяет persisted арифметику.
 
 Ручная загрузка:
 
@@ -358,7 +376,7 @@ Price Model не меняет regex парсеров. Rimi parser передае
 - Multipack вроде `6x330ml` пока не разбирается в общий объем; Price Model только ставит warning.
 - `lkg`, `m1`, unsafe split decimals и glued package tokens не исправляются догадкой; новый parser отклоняет такие item candidates.
 - Audit-категория `unknown` не означает ошибку: она включает обычные товары без узкой contamination signature.
-- У Maxima единица количества пока неизвестна, поэтому нормализованная цена зависит от размера упаковки в названии.
+- У Maxima единица количества известна как `piece` только при явном `gab.`/`gb.`; прочие строки требуют детерминированного Price Model evidence.
 
 ## Поддерживаемые магазины
 

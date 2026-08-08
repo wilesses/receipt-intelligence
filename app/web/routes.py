@@ -1,4 +1,3 @@
-from datetime import date
 import re
 from statistics import median
 from urllib.parse import parse_qsl, unquote, urlsplit
@@ -92,6 +91,21 @@ def _item_requires_review(price_parse_confidence, normalized_unit_price):
             )
         )
     )
+
+
+def _comma_number(value, decimals):
+    return f"{float(value):.{decimals}f}".replace(".", ",")
+
+
+def _receipt_price_semantics(quantity, quantity_unit, unit_price, line_total):
+    total_text = _comma_number(line_total, 2)
+    if quantity_unit == "piece" and unit_price is not None:
+        quantity_text = f"{float(quantity):g}".replace(".", ",")
+        return f"{quantity_text} шт. · {_comma_number(unit_price, 2)} €/шт. · итого {total_text} €"
+    if quantity_unit in {"kg", "l"} and unit_price is not None:
+        unit_label = "кг" if quantity_unit == "kg" else "л"
+        return f"{_comma_number(quantity, 3)} {unit_label} · {_comma_number(unit_price, 2)} €/{unit_label} · итого {total_text} €"
+    return f"итого {total_text} €"
 
 
 def _review_groups(conn, query=""):
@@ -347,14 +361,16 @@ def init_routes(app):
         view = request.args.get("view", "overview").strip() or "overview"
         store_search = request.args.get("store_search", "").strip()
         story_debug = request.args.get("story_debug") == "1"
+        as_of = app.config["TODAY_PROVIDER"]()
         available_story_months = get_available_receipt_months()
         selected_story_month = resolve_story_month(
             request.args.get("month", "").strip() or None,
             available_story_months,
+            as_of=as_of,
         )
         story_period = (
             "current_month"
-            if selected_story_month == date.today().strftime("%Y-%m")
+            if selected_story_month == as_of.strftime("%Y-%m")
             else f"month:{selected_story_month}"
         )
         dashboard_period = (
@@ -362,7 +378,7 @@ def init_routes(app):
             if view != "receipts"
             else period
         )
-        dashboard = get_dashboard_data(dashboard_period)
+        dashboard = get_dashboard_data(dashboard_period, as_of=as_of)
         receipts = get_period_receipts(dashboard["period"], store_search)
         return render_template(
             "index.html",
@@ -401,7 +417,7 @@ def init_routes(app):
                 ), 404
 
             rows = conn.execute(f"""
-                SELECT id, name, quantity, price, category, category_source,
+                SELECT id, name, quantity, quantity_unit, price, category, category_source,
                        normalized_unit_price, normalized_price_unit, line_total, unit_price,
                        package_size, package_unit, {PRODUCT_NAME_EXPR} AS display_name,
                        price_parse_confidence
@@ -410,16 +426,23 @@ def init_routes(app):
                 ORDER BY id
             """, (receipt_id,)).fetchall()
 
-            for item_id, name, quantity, price, category, category_source, normalized_unit_price, normalized_price_unit, line_total, unit_price, package_size, package_unit, display_name, price_parse_confidence in rows:
+            for item_id, name, quantity, quantity_unit, price, category, category_source, normalized_unit_price, normalized_price_unit, line_total, unit_price, package_size, package_unit, display_name, price_parse_confidence in rows:
                 quantity = float(quantity or 0)
-                price = float(price or 0)
-                item_total_sum += price
+                paid_total = float(line_total if line_total is not None else (price or 0))
+                item_total_sum += paid_total
                 items.append({
                     "id": item_id,
                     "name": name,
                     "quantity": quantity,
                     "quantity_display": f"{quantity:g}",
-                    "price": price,
+                    "price": paid_total,
+                    "quantity_unit": quantity_unit or "unknown",
+                    "price_semantics_display": _receipt_price_semantics(
+                        quantity,
+                        quantity_unit or "unknown",
+                        unit_price,
+                        paid_total,
+                    ),
                     "category": normalize_category_name(category),
                     "category_source": category_source or "rule",
                     "category_source_label": source_label(category_source),
@@ -815,7 +838,9 @@ def init_routes(app):
                        SUM(normalized_price_unit = 'eur_per_piece'),
                        SUM(normalized_price_unit IS NULL OR normalized_price_unit = 'unknown'),
                        SUM(price_parse_confidence IS NOT NULL AND price_parse_confidence < 0.75),
-                       SUM(normalized_unit_price > 10000 OR normalized_unit_price <= 0)
+                       SUM(normalized_unit_price > 10000 OR normalized_unit_price <= 0),
+                       SUM(quantity > 0 AND unit_price IS NOT NULL
+                           AND ROUND(ABS(quantity * unit_price - COALESCE(line_total, price)), 4) > 0.02)
                 FROM items
             """).fetchone()
 
@@ -834,13 +859,17 @@ def init_routes(app):
                     OR items.normalized_price_unit IS NULL OR items.normalized_price_unit = 'unknown'
                     OR items.price_parse_confidence IS NULL OR items.price_parse_confidence < 0.75
                     OR items.normalized_unit_price > 10000 OR items.normalized_unit_price <= 0
+                    OR (items.quantity > 0 AND items.unit_price IS NOT NULL
+                        AND ROUND(ABS(items.quantity * items.unit_price - COALESCE(items.line_total, items.price)), 4) > 0.02)
                 )""")
 
             rows = conn.execute(f"""
                 SELECT items.name, items.receipt_id, receipts.store, receipts.date,
-                       items.quantity, items.quantity_unit, items.line_total, items.unit_price,
+                       items.quantity, items.quantity_unit, COALESCE(items.line_total, items.price), items.unit_price,
                        items.package_size, items.package_unit, items.normalized_unit_price,
-                       items.normalized_price_unit, items.price_parse_confidence
+                       items.normalized_price_unit, items.price_parse_confidence,
+                       (items.quantity > 0 AND items.unit_price IS NOT NULL
+                        AND ROUND(ABS(items.quantity * items.unit_price - COALESCE(items.line_total, items.price)), 4) > 0.02)
                 FROM items
                 JOIN receipts ON receipts.id = items.receipt_id
                 WHERE {" AND ".join(conditions)}
@@ -867,7 +896,8 @@ def init_routes(app):
                        items.receipt_id, items.id, items.category, items.category_source, items.name,
                        {PRODUCT_NAME_EXPR} AS product_name,
                        items.normalized_unit_price, items.normalized_price_unit,
-                       items.line_total, items.unit_price, items.package_size, items.package_unit
+                       items.line_total, items.unit_price, items.package_size, items.package_unit,
+                       items.price_parse_source, items.price_parse_confidence
                 FROM items
                 JOIN receipts ON items.receipt_id = receipts.id
                 WHERE ({PRODUCT_NAME_EXPR} = ? OR items.name = ?)
@@ -909,13 +939,15 @@ def init_routes(app):
         if rows:
             latest = rows[-1]
             latest_price_model = {
-                "line_total": latest[12],
+                "line_total": latest[12] if latest[12] is not None else latest[3],
                 "unit_price": latest[13],
                 "package_size": latest[14],
                 "package_unit": latest[15],
                 "normalized_unit_price": latest[10],
                 "normalized_price_unit": latest[11],
                 "normalized_price_label": PRICE_UNIT_LABELS.get(latest[11] or "unknown", latest[11] or "unknown"),
+                "source": latest[16],
+                "confidence": latest[17],
             }
 
         return render_template(

@@ -187,5 +187,21 @@ class PriceQualityWorkspaceTests(unittest.TestCase):
             self.assertIn(contract, css)
 
 
+    def test_all_problems_reports_arithmetic_conflict_despite_high_confidence(self):
+        self.add_item(
+            "Persisted arithmetic conflict",
+            quantity=2,
+            line_total=3.10,
+            unit_price=1.99,
+            confidence=0.95,
+        )
+
+        html = self.client.get("/data-quality/prices?filter=all").get_data(as_text=True)
+
+        self.assertIn("Persisted arithmetic conflict", html)
+        self.assertIn("Арифметика цены расходится", html)
+        self.assertIn("Уверенность нормализации", html)
+
+
 if __name__ == "__main__":
     unittest.main()

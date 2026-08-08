@@ -26,6 +26,10 @@
             <dt>Подозрительные значения</dt>
             <dd>{{ summary[9] or 0 }}</dd>
         </div>
+        <div{% if not summary[10] %} class="is-zero"{% endif %}>
+            <dt>Арифметические конфликты</dt>
+            <dd>{{ summary[10] or 0 }}</dd>
+        </div>
     </dl>
 
     <details class="coverage-details">
@@ -110,7 +114,10 @@
 {%- endmacro %}
 
 {% macro diagnostic_status(row, issue_filter) -%}
-{% if issue_filter == "suspicious" or (row[10] is not none and (row[10] > 10000 or row[10] <= 0)) %}
+{% if row[13] %}
+    {{ review_status("Арифметика цены расходится", "attention") }}
+    <p>Количество, оплачено за единицу и итог позиции противоречат друг другу; корректное поле не выбирается автоматически.</p>
+{% elif issue_filter == "suspicious" or (row[10] is not none and (row[10] > 10000 or row[10] <= 0)) %}
     {{ review_status("Подозрительная цена", "attention") }}
     <p>Нормализованное значение выходит за допустимый диапазон текущей проверки.</p>
 {% elif issue_filter == "unknown" or not row[5] or row[5] == "unknown" %}
@@ -160,10 +167,10 @@
         <strong>{{ row[4] if row[4] is not none else "—" }}</strong>
         <span>{{ quantity_units.get(row[5], row[5] or "Единица неизвестна") }}</span>
     </td>
-    <td class="diagnostic-confidence" data-label="Уверенность">
+    <td class="diagnostic-confidence" data-label="Уверенность нормализации">
         {% if row[12] is not none %}
             <strong>{{ "%.0f"|format(row[12] * 100) }}%</strong>
-            <span>расчёт модели цены</span>
+            <span>уверенность нормализации</span>
         {% else %}
             <span class="diagnostic-unavailable">Не рассчитана</span>
         {% endif %}

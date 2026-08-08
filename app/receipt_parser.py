@@ -229,6 +229,8 @@ def parse_receipt(text: str) -> dict:
             # Количество
             qty_match = re.search(r"X\s+([\d,]+)", line)
             quantity = float(qty_match.group(1).replace(",", ".")) if qty_match else 1.0
+            listed_unit_price = parse_money(re.search(r"(\d+,\d{2})\s+X\s+", line).group(1))
+            quantity_unit = "piece" if re.search(r"X\s+[\d,]+\s+(?:gab|gb)\.?\b", line, re.IGNORECASE) else "unknown"
 
             # Цена (берем скидочную)
             price = None
@@ -249,7 +251,8 @@ def parse_receipt(text: str) -> dict:
                 "name": name,
                 "price": price,
                 "quantity": quantity,
-                "quantity_unit": "unknown",
+                "quantity_unit": quantity_unit,
+                "unit_price": listed_unit_price,
                 "category": category
             }
             items.append(last_item)

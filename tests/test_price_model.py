@@ -1,5 +1,8 @@
+import tempfile
 import unittest
+from pathlib import Path
 
+import app.db as db
 from app.price_model import (
     are_price_units_comparable,
     derive_price_data,
@@ -27,7 +30,7 @@ class PriceModelTest(unittest.TestCase):
         )
 
         self.assertEqual(data.quantity, 0.742)
-        self.assertEqual(data.unit_price, 7.99)
+        self.assertEqual(data.unit_price, round(5.93 / 0.742, 4))
         self.assertLessEqual(
             abs(data.quantity * data.unit_price - data.line_total),
             max(0.02, data.line_total * 0.02),
@@ -272,7 +275,12 @@ class PriceModelTest(unittest.TestCase):
         self.assertIn("parser_contamination", data.warnings)
 
     def test_multipacks_stay_unresolved(self):
-        for name in ("Konfektes 11x12,6g", "Alus 6 x 330 ml"):
+        for name in (
+            "Konfektes 11x12,6g",
+            "Alus 6 x 330 ml",
+            "Biezenis 6х110g",
+            "Biezenis 6×110g",
+        ):
             with self.subTest(name=name):
                 data = derive_price_data(
                     name=name,
@@ -285,6 +293,127 @@ class PriceModelTest(unittest.TestCase):
 
                 self.assert_unresolved(data)
                 self.assertIn("multipack_unresolved", data.warnings)
+
+    def test_supported_age_markers_resolve_second_measurement_as_package(self):
+        cases = (
+            ("Biezenis 6+110g", 110, "g"),
+            ("Biezenis 6+ 110g", 110, "g"),
+            ("Biezenis 4+90g", 90, "g"),
+            ("Dzēriens 12+ 200ml", 200, "ml"),
+        )
+
+        for name, expected_size, expected_unit in cases:
+            with self.subTest(name=name):
+                data = derive_price_data(name=name, quantity=1, line_total=1.10)
+                self.assertEqual(data.package_size, expected_size)
+                self.assertEqual(data.package_unit, expected_unit)
+                self.assertNotIn("multipack_unresolved", data.warnings)
+
+    def test_non_age_plus_and_conflicting_measurements_stay_unresolved(self):
+        for name in (
+            "Biezenis 45+110g",
+            "Biezenis 0+110g",
+            "Biezenis 37+110g",
+            "Biezenis 6++110g",
+            "Biezenis 6+110g 200g",
+            "Biezenis 6+25000g",
+        ):
+            with self.subTest(name=name):
+                data = derive_price_data(name=name, quantity=1, line_total=1.10)
+                self.assert_unresolved(data)
+
+    def test_weighted_caliber_suffix_requires_fractional_consistent_evidence(self):
+        for name in ("Sīpoli 45+ kg", "Sīpoli 45+ kg 2. šķ."):
+            with self.subTest(name=name):
+                data = derive_price_data(
+                    name=name,
+                    quantity=0.58,
+                    unit_price=0.91,
+                    line_total=0.53,
+                )
+                self.assertEqual(data.quantity_unit, "kg")
+                self.assertIsNone(data.package_size)
+                self.assertEqual(data.normalized_price_unit, "eur_per_kg")
+                self.assertEqual(data.unit_price, round(0.53 / 0.58, 4))
+                self.assertEqual(data.normalized_unit_price, round(0.53 / 0.58, 4))
+
+    def test_weighted_caliber_never_becomes_45000g_package(self):
+        for quantity, listed_unit_price in ((1, 0.53), (0.58, 1.50)):
+            with self.subTest(quantity=quantity, listed_unit_price=listed_unit_price):
+                data = derive_price_data(
+                    name="Sīpoli 45+ kg",
+                    quantity=quantity,
+                    unit_price=listed_unit_price,
+                    line_total=0.53,
+                )
+                self.assertIsNone(data.package_size)
+                self.assertNotEqual(data.package_size, 45000)
+                self.assertEqual(data.normalized_price_unit, "unknown")
+
+    def test_paid_unit_price_replaces_listed_price_and_keeps_mismatch_warning(self):
+        data = derive_price_data(
+            name="Siers 200g",
+            quantity=2,
+            unit_price=1.99,
+            line_total=3.10,
+            quantity_unit="gab",
+            source="parser",
+        )
+
+        self.assertEqual(data.unit_price, 1.55)
+        self.assertIn("line_total_unit_price_mismatch", data.warnings)
+        self.assertLess(data.confidence, 0.75)
+
+    def test_arithmetic_tolerance_is_fixed_at_two_cents(self):
+        at_limit = derive_price_data(
+            name="Maize",
+            quantity=2,
+            unit_price=1.51,
+            line_total=3.00,
+            quantity_unit="gab",
+            source="parser",
+        )
+        over_limit = derive_price_data(
+            name="Maize",
+            quantity=2,
+            unit_price=1.511,
+            line_total=3.00,
+            quantity_unit="gab",
+            source="parser",
+        )
+
+        self.assertNotIn("line_total_unit_price_mismatch", at_limit.warnings)
+        self.assertIn("line_total_unit_price_mismatch", over_limit.warnings)
+
+    def test_persistence_normalizes_paid_total_alias_and_effective_unit_price(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
+            old_db_path = db.DB_PATH
+            db.DB_PATH = Path(tmpdir) / "test.db"
+            try:
+                saved = db.add_receipt_with_items(
+                    "2026-08-08",
+                    "RIMI",
+                    3.10,
+                    "price-contract-v2",
+                    [{
+                        "name": "Siers 200g",
+                        "quantity": 2,
+                        "quantity_unit": "gab",
+                        "price": 3.10,
+                        "line_total": 3.10,
+                        "unit_price": 1.99,
+                        "source": "parser",
+                    }],
+                )
+                with db.get_connection() as conn:
+                    row = conn.execute(
+                        "SELECT price, line_total, unit_price FROM items"
+                    ).fetchone()
+            finally:
+                db.DB_PATH = old_db_path
+
+        self.assertTrue(saved)
+        self.assertEqual(tuple(row), (3.10, 3.10, 1.55))
 
     def test_safe_inferred_piece_requires_explicit_line_total(self):
         data = derive_price_data(name="Maize", quantity=2, line_total=3)

@@ -113,6 +113,23 @@ class DashboardTests(unittest.TestCase):
             (date(2026, 4, 1), date(2026, 5, 1)),
         )
 
+    def test_period_boundaries_cross_from_january_to_previous_year(self):
+        service = self.service()
+        as_of = date(2027, 1, 10)
+
+        current = service.resolve_period("current_month", as_of)
+        previous = service.resolve_period("previous_month", as_of)
+
+        self.assertEqual((current.start, current.end), (date(2027, 1, 1), date(2027, 1, 11)))
+        self.assertEqual(
+            (current.previous_start, current.previous_end),
+            (date(2026, 12, 1), date(2026, 12, 11)),
+        )
+        self.assertEqual(
+            (previous.start, previous.end),
+            (date(2026, 12, 1), date(2027, 1, 1)),
+        )
+
     def test_available_story_months_are_data_backed_sorted_and_validated(self):
         service = self.service()
         self.add_receipt("2026-01-10", 10, "jan")
@@ -645,6 +662,7 @@ class DashboardTests(unittest.TestCase):
         )
         app = create_app()
         app.config["TESTING"] = True
+        app.config["TODAY_PROVIDER"] = lambda: date(2026, 7, 14)
         client = app.test_client()
 
         overview = client.get("/")

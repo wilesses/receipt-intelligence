@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app.receipt_parser import parse_receipt
+from app.price_model import derive_price_data
 
 
 def rimi_receipt(name, price_line="1 gab X 1,99 EUR 1,99", extra_lines=None):
@@ -24,7 +25,7 @@ def rimi_receipt(name, price_line="1 gab X 1,99 EUR 1,99", extra_lines=None):
     return "\n".join(lines)
 
 
-def maxima_receipt(name_lines, price_line="1,99 X 1 1,99 A", extra_lines=None):
+def maxima_receipt(name_lines, price_line="1,99 X 1 gab. 1,99 A", extra_lines=None):
     lines = [
         "MAXIMA",
         *name_lines,
@@ -37,6 +38,60 @@ def maxima_receipt(name_lines, price_line="1,99 X 1 1,99 A", extra_lines=None):
 
 
 class ReceiptParserRegressionTests(unittest.TestCase):
+    def test_receipt_374_golden_parses_and_derives_exact_paid_semantics(self):
+        fixture = Path(__file__).parent / "fixtures" / "receipt_374_maxima.txt"
+        receipt = parse_receipt(fixture.read_text(encoding="utf-8"))
+        derived = [
+            derive_price_data(
+                name=item["name"],
+                quantity=item["quantity"],
+                line_total=item["price"],
+                unit_price=item.get("unit_price"),
+                quantity_unit=item.get("quantity_unit"),
+                source="parser",
+            )
+            for item in receipt["items"]
+        ]
+
+        expected = (
+            ("Dzeramais ūdens AQUA negāzēts 5L", 1, .97, .97, 5000, "ml", .1940, "eur_per_l"),
+            ("BIO biez. RŪDOLFS dārz. rīsi vista 6+ 110g", 1, 1.74, 1.74, 110, "g", 15.8182, "eur_per_kg"),
+            ("BIO biez. RŪDOLFS sald. kartup. burk. 6+110g", 1, 1.48, 1.48, 110, "g", 13.4545, "eur_per_kg"),
+            ("BIO biez. RŪDOLFS aprik. ban. ķirbju 6+110g", 1, 1.48, 1.48, 110, "g", 13.4545, "eur_per_kg"),
+            ("Saldēti frī kartupeļi AVIKO Steak 750g", 1, 2.62, 2.62, 750, "g", 3.4933, "eur_per_kg"),
+            ("Cāļa filejas šašliks Cēzara mar. RM 700g", 1, 6.83, 6.83, 700, "g", 9.7571, "eur_per_kg"),
+            ("Liell. g. uzkoda Beef Jerky Classic WD 40g", 1, 2.23, 2.23, 40, "g", 55.7500, "eur_per_kg"),
+            ("Vār. Doktordesa MELNAIS BARONS 400g", 1, 2.33, 2.33, 400, "g", 5.8250, "eur_per_kg"),
+            ("Nūd. zupa NONGSHIM KIMCHI RAMYUN 120g", 2, 3.10, 1.55, 120, "g", 12.9167, "eur_per_kg"),
+            ("Vīns ZIBOMARE Zibibbo 12% 0,75L", 1, 6.99, 6.99, 750, "ml", 9.3200, "eur_per_l"),
+            ("Proteīna dzēr. PIENA SPĒKS šokolādes 460g", 1, 1.04, 1.04, 460, "g", 2.2609, "eur_per_kg"),
+        )
+
+        self.assertEqual(receipt["store"], "MAXIMA")
+        self.assertEqual(receipt["date"], "2026-08-07")
+        self.assertEqual(receipt["total"], 31.00)
+        self.assertEqual(len(receipt["items"]), 11)
+        self.assertNotIn("Papīra iepirkumu maisiņš PALDIES", [item["name"] for item in receipt["items"]])
+        self.assertEqual(round(sum(item["price"] for item in receipt["items"]), 2), 30.81)
+        self.assertEqual(round(sum(item["price"] for item in receipt["items"]) + .19, 2), receipt["total"])
+
+        for item, price_data, wanted in zip(receipt["items"], derived, expected, strict=True):
+            name, quantity, total, unit_price, package_size, package_unit, normalized, normalized_unit = wanted
+            with self.subTest(name=name):
+                self.assertEqual(item["name"], name)
+                self.assertEqual(price_data.quantity, quantity)
+                self.assertEqual(price_data.quantity_unit, "piece")
+                self.assertEqual(price_data.line_total, total)
+                self.assertEqual(price_data.unit_price, unit_price)
+                self.assertEqual(price_data.package_size, package_size)
+                self.assertEqual(price_data.package_unit, package_unit)
+                self.assertAlmostEqual(price_data.normalized_unit_price, normalized, places=4)
+                self.assertEqual(price_data.normalized_price_unit, normalized_unit)
+
+        rudolfs = derived[1:4]
+        self.assertEqual([item.package_size for item in rudolfs], [110, 110, 110])
+        self.assertTrue(all(item.package_unit == "g" for item in rudolfs))
+
     def test_repairs_safe_decimal_whitespace_before_liter_unit(self):
         for raw, expected in (("Piens 1, 5L", "Piens 1,5L"), ("Ūdens 0, 5L", "Ūdens 0,5L")):
             with self.subTest(raw=raw):
@@ -105,13 +160,46 @@ class ReceiptParserRegressionTests(unittest.TestCase):
 
     def test_rimi_discount_uses_final_price(self):
         result = parse_receipt(rimi_receipt("Siers 200g", extra_lines=["ATL. -0,50", "Gala cena 1,49"]))
-        self.assertEqual(result["items"][0]["price"], 1.49)
+        item = result["items"][0]
+        data = derive_price_data(
+            name=item["name"],
+            quantity=item["quantity"],
+            line_total=item["price"],
+            unit_price=item["unit_price"],
+            quantity_unit=item["quantity_unit"],
+            source="parser",
+        )
+        self.assertEqual(item["price"], 1.49)
+        self.assertEqual(data.unit_price, 1.49)
+        self.assertEqual(data.normalized_unit_price, 7.45)
 
     def test_normal_maxima_item(self):
         result = parse_receipt(maxima_receipt(["Piens 1L"]))
         item = result["items"][0]
         self.assertEqual(result["date"], "14.07.2026")
-        self.assertEqual((item["name"], item["quantity"], item["price"]), ("Piens 1L", 1, 1.99))
+        self.assertEqual(
+            (item["name"], item["quantity"], item["quantity_unit"], item["price"]),
+            ("Piens 1L", 1, "piece", 1.99),
+        )
+
+    def test_maxima_weighted_caliber_uses_fractional_merchant_evidence(self):
+        result = parse_receipt(
+            maxima_receipt(["Sīpoli 45+ kg 2. šķ."], price_line="0,91 X 0,580 0,53 A")
+        )
+        item = result["items"][0]
+        data = derive_price_data(
+            name=item["name"],
+            quantity=item["quantity"],
+            line_total=item["price"],
+            unit_price=item["unit_price"],
+            quantity_unit=item["quantity_unit"],
+            source="parser",
+        )
+
+        self.assertEqual(item["quantity_unit"], "unknown")
+        self.assertEqual(data.quantity_unit, "kg")
+        self.assertEqual(data.unit_price, round(.53 / .58, 4))
+        self.assertEqual(data.normalized_unit_price, round(.53 / .58, 4))
 
     def test_maxima_discount_uses_discount_price(self):
         result = parse_receipt(maxima_receipt(["Siers 200g"], extra_lines=["Cena ar atlaidi 1,49"]))

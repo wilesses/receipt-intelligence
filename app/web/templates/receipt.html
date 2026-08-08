@@ -84,7 +84,7 @@
         <div class="receipt-item-head" aria-hidden="true">
             <span>Товар</span>
             <span>Количество</span>
-            <span>Цена</span>
+            <span>Итого за позицию</span>
             <span>Категория</span>
             <span>Статус</span>
         </div>
@@ -93,7 +93,7 @@
             <div class="receipt-item-row receipt-detail-item{% if item.needs_review %} needs-review{% endif %}" data-receipt-item-row>
                 <strong data-label="Товар">{{ item.display_name }}</strong>
                 <span data-label="Количество">{{ item.quantity_display }}</span>
-                <span data-label="Цена" class="receipt-detail-item-price">{{ "%.2f"|format(item.price) }} €</span>
+                <span data-label="Итого за позицию" class="receipt-detail-item-price">{{ item.price_semantics_display }}</span>
                 <div data-label="Категория" class="receipt-detail-category">
                     <details class="receipt-category-editor">
                         <summary>{{ item.category }}</summary>

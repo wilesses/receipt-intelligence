@@ -2,7 +2,12 @@
 
 ## Confirmed state
 
-- Main database: `data/receipts.db`, 360 receipts and 3580 items.
+- Main database: `data/receipts.db`, 372 receipts and 3686 items.
+- Parser Hardening v2 is implemented for new imports. Persisted `price == line_total`; effective `unit_price` is paid total divided by quantity; normalized price uses paid total. Fixed €0.02 mismatch validation caps normalization confidence below 0.75.
+- Measurement parsing recognizes age/package tokens only for ages 1–36 (`6+110g` -> 110 g), keeps `x`/`х`/`×` multipacks unresolved, and treats supported fractional terminal `45+ kg` forms as weighted evidence without producing a 45000 g package.
+- Receipt Detail, Product Dossier, Purchase Register, and Price Quality use explicit paid-total/effective-unit/normalization terminology. Price Quality detects persisted arithmetic mismatch independently of stored confidence and supports `COALESCE(line_total, price)` for legacy rows.
+- Receipt #374 is covered by a sanitized 11-product golden fixture: product rows total €30.81; excluded paper-bag service line €0.19 reconciles to header total €31.00; all three RŪDOLFS rows resolve to 110 g.
+- Parser Hardening corpus projection was read-only over 3686 rows: 3 newly resolved unspaced age/package rows, 85 multipack candidates kept unresolved, 5 deterministic weighted projections, 10 existing arithmetic conflicts, and 0 reviewed new false-positive age/package resolutions. Production DB SHA256 remained `BBBC449848310319837C4B84176848E530F52217514E460E0D491A2B50991F35`.
 - Production Receipts archive (`/?view=receipts`) now uses the Receipt Workspace composition: compact header, supported GET filters, document-like receipt rows, inline expansion with real item previews, honest evidence summary, and drawer for currently available receipt/extraction state.
 - The Receipts archive includes a compact current-month evidence band above filters: real monthly spend, secondary forecast eligibility state, receipt/item-line counts, and Top 3 products by month spend.
 - The archive keeps existing URLs and behavior: `/` with `view=receipts`, `period`, `store_search`, upload link, return to overview, client sorting, and `/receipt/<id>` detail fallback.
@@ -37,7 +42,8 @@
 - Upload (`/upload`) now uses a Focused Task Workspace: one primary PDF selection surface, an explicit file queue, one import command bar, and Gmail import as a visually secondary source. Existing `/upload` and `/gmail/fetch` endpoints, the multipart `pdfs` payload, importer, parser, routes, and database behavior remain unchanged.
 - Upload interaction is isolated in `app/web/static/upload-workspace.js`. It preserves drag-and-drop and multiple-file selection, renders filenames and server results through safe DOM APIs, keeps progress on `transform: scaleX`, and exposes distinct empty, busy, success, warning, and error states without adding a frontend dependency.
 - Upload browser verification covers empty and two-file queue states, a long filename, 1000/390/360 widths, dark/light themes, 44px controls, duplicate IDs, horizontal overflow, and console errors. A real import and Gmail fetch were intentionally not executed against production data; their existing request contracts are covered structurally and by route tests.
-- The full suite currently runs 171 tests: 168 pass and the same 3 pre-existing calendar-sensitive Archive/Home failures remain because July fixtures still expect `current_month` after the real clock moved to August 2026. All 6 Upload workspace tests and all 9 focused Upload/shell checks pass.
+- Calendar-sensitive Archive/Home tests now use an explicit July 14, 2026 reference date through the narrow `TODAY_PROVIDER` application seam. Production defaults to `date.today`, and the route passes one reference date through story-month resolution and dashboard calculations. January-to-December year-boundary behavior is covered explicitly.
+- The full suite currently runs 185 tests with zero failures. Parser Hardening focused verification passes, including all 92 tests across price model, receipt parser, Receipt/UI semantics, Product Dossier, and Price Quality; golden receipt #374 passes exactly.
 - Project-local ECC workflows `eval-harness`, `e2e-testing`, and `verification-loop` are installed under `.agents/skills/`; no ECC hooks, MCP servers, global Codex config, or broader profiles were installed.
 - Ruflo `3.32.9` is prepared as an optional project-local Codex MCP with hierarchical coordination, a four-agent limit, initialized local SQLite memory, HNSW search, a project memory graph, safe hooks, local learning, and bounded daemon autostart. Hook auto-execution, scheduled AI workers, cloud MCP, federation, and global config changes remain disabled; Codex stays in `workspace-write` with on-request approvals. A new Codex session is required to load the MCP; see `docs/Ruflo.md`.
 - SQLite Backup API created `data/backups/receipts_before_price_backfill_20260714_190009_160214.db`; `PRAGMA integrity_check` returned `ok`.
@@ -45,9 +51,7 @@
 
 ## Next recommended stage
 
-Review the production Upload workspace visually. Do not move to another screen automatically; after approval, use the implementation plan to choose the next bounded migration or cross-screen consistency audit.
-
-Manually compare representative unresolved multipack/ambiguous names with available source PDFs or extracted text. Add parser rules only when raw evidence proves a narrow transformation; keep `inferred_piece` experimental.
+Review the Parser Hardening v2 checkpoint in production UI. Historical data remains unchanged; any backfill requires a separate dry-run, diff, backup, and explicit approval.
 
 ## Do not run without explicit user approval
 
