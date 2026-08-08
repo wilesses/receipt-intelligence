@@ -1,124 +1,104 @@
 {% extends "base.html" %}
+{% from "_review_components.html" import review_summary %}
+{% from "_comparison_components.html" import comparison_pair %}
 {% block title %}Похожие товары{% endblock %}
+{% block body_class %}review-page comparison-page{% endblock %}
 {% block content %}
-<section class="page-header">
-    <div>
-        <p class="eyebrow">Товары</p>
-        <h1>Похожие товары</h1>
-    </div>
-    <a href="{{ url_for('products_merge') }}" class="btn btn-outline-secondary">
-        <i class="bi bi-diagram-3" aria-hidden="true"></i>
-        Объединение
-    </a>
-</section>
+{% set confidence_labels = {
+    "high": "Высокая вероятность",
+    "possible": "Возможное совпадение"
+} %}
+{% set active_filter = confidence_labels.get(confidence, "Все пары") %}
+{% if query %}{% set active_filter = active_filter ~ " · «" ~ query ~ "»" %}{% endif %}
 
-<section class="surface">
-    <form method="get" action="{{ url_for('product_suggestions') }}" class="filters-grid suggestions-filters">
-        <label>
-            <span>Поиск</span>
-            <input class="form-control" type="search" name="q" value="{{ query }}" placeholder="Название товара" autocomplete="off">
-        </label>
-        <label>
-            <span>Уверенность</span>
-            <select class="form-select" name="confidence" autocomplete="off">
-                <option value="" {% if not confidence %}selected{% endif %}>Все</option>
-                <option value="high" {% if confidence == "high" %}selected{% endif %}>Высокая вероятность</option>
-                <option value="possible" {% if confidence == "possible" %}selected{% endif %}>Возможное совпадение</option>
-            </select>
-        </label>
-        <label>
-            <span>Лимит</span>
-            <select class="form-select" name="limit" autocomplete="off">
-                {% for value in [25, 50, 100, 200] %}
-                    <option value="{{ value }}" {% if limit == value %}selected{% endif %}>{{ value }}</option>
-                {% endfor %}
-            </select>
-        </label>
-        <button class="btn btn-primary" type="submit">
-            <i class="bi bi-funnel" aria-hidden="true"></i>
-            Показать
-        </button>
-    </form>
-</section>
+<article class="comparison-workspace" aria-labelledby="comparison-title">
+    <header class="page-header review-page-header comparison-page-header">
+        <div>
+            <h1 id="comparison-title">Похожие товары</h1>
+            <p>Сравните предложенную пару и решите, относится ли она к одному товару.</p>
+        </div>
+        <p class="review-queue-count"><strong>{{ suggestions|length }}</strong> пар в очереди</p>
+    </header>
 
-<section class="summary-grid" aria-label="Сводка похожих товаров">
-    <div class="metric-card">
-        <span>Найдено пар</span>
-        <strong id="suggestionCount">{{ suggestions|length }}</strong>
-    </div>
-    <div class="metric-card">
-        <span>Высокая вероятность</span>
-        <strong>{{ suggestions|selectattr("confidence", "equalto", "high")|list|length }}</strong>
-    </div>
-    <div class="metric-card">
-        <span>Возможное совпадение</span>
-        <strong>{{ suggestions|selectattr("confidence", "equalto", "possible")|list|length }}</strong>
-    </div>
-</section>
-
-<section class="suggestions-list" id="suggestionsList">
-    {% for item in suggestions %}
-    <article class="surface suggestion-card" data-card>
-        <div class="suggestion-card-header">
-            <div>
-                <span class="confidence-badge confidence-{{ item.confidence }}">
-                    {{ "Высокая вероятность" if item.confidence == "high" else "Возможное совпадение" }}
-                </span>
-                <strong>{{ "%.2f"|format(item.score) }}%</strong>
-            </div>
-            <button class="btn btn-outline-secondary btn-sm" type="button" data-dismiss>
-                <i class="bi bi-clock" aria-hidden="true"></i>
-                Отложить
+    <section class="review-toolbar comparison-toolbar" aria-labelledby="comparison-filters-title">
+        <div class="review-toolbar-heading">
+            <h2 id="comparison-filters-title">Фокус очереди</h2>
+            <p>Найдите товар или выберите уровень уверенности предложения.</p>
+        </div>
+        <form method="get" action="{{ url_for('product_suggestions') }}" class="comparison-filter-grid">
+            <label class="comparison-search-field">
+                <span>Поиск товара</span>
+                <input class="form-control" type="search" name="q" value="{{ query }}" placeholder="Название товара" autocomplete="off">
+            </label>
+            <label>
+                <span>Уверенность</span>
+                <select class="form-select" name="confidence" autocomplete="off">
+                    <option value="" {% if not confidence %}selected{% endif %}>Все пары</option>
+                    <option value="high" {% if confidence == "high" %}selected{% endif %}>Высокая вероятность</option>
+                    <option value="possible" {% if confidence == "possible" %}selected{% endif %}>Возможное совпадение</option>
+                </select>
+            </label>
+            <label>
+                <span>Показывать</span>
+                <select class="form-select" name="limit" autocomplete="off">
+                    {% for value in [25, 50, 100, 200] %}
+                        <option value="{{ value }}" {% if limit == value %}selected{% endif %}>{{ value }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+            <button class="btn btn-primary review-filter-submit" type="submit">
+                <i class="bi bi-funnel" aria-hidden="true"></i>
+                Показать
             </button>
-        </div>
-
-        <div class="suggestion-products">
-            <div>
-                <span>Левый товар</span>
-                <h2>{{ item.left_name }}</h2>
-                <p>{{ item.left_count }} строк · {{ item.left_receipt_count }} чеков · {{ item.left_category or "без категории" }}</p>
-            </div>
-            <div>
-                <span>Правый товар</span>
-                <h2>{{ item.right_name }}</h2>
-                <p>{{ item.right_count }} строк · {{ item.right_receipt_count }} чеков · {{ item.right_category or "без категории" }}</p>
-            </div>
-        </div>
-
-        <ul class="suggestion-reasons">
-            {% for reason in item.reasons %}
-                <li>{{ reason }}</li>
-            {% endfor %}
-        </ul>
-
-        <details class="technical-details">
-            <summary>Нормализованные названия</summary>
-            <div>{{ item.left_normalized }}</div>
-            <div>{{ item.right_normalized }}</div>
-        </details>
-
-        <div class="suggestion-actions">
-            <a class="btn btn-primary" href="{{ url_for('products_merge', q=item.merge_query) }}">
-                <i class="bi bi-box-arrow-up-right" aria-hidden="true"></i>
-                Открыть объединение
-            </a>
-        </div>
-    </article>
-    {% else %}
-    <section class="surface">
-        <p class="empty-message">Похожие товары не найдены.</p>
+        </form>
     </section>
-    {% endfor %}
-</section>
+
+    {{ review_summary(suggestions|length, suggestions|length, active_filter, "Ожидают решения", "пар", "Показано сейчас", "Текущий фильтр", "review-summary-band comparison-summary-band", "comparison-summary-title", "suggestionCount") }}
+
+    <section class="comparison-queue" id="suggestionsList" aria-labelledby="comparison-queue-title">
+        <header class="review-queue-heading comparison-queue-heading">
+            <div>
+                <h2 id="comparison-queue-title">Пары для сравнения</h2>
+                <p>Сначала различия, затем основания предложения и действие.</p>
+            </div>
+            <span>{{ suggestions|length }} пар</span>
+        </header>
+
+        {% for item in suggestions %}
+            {{ comparison_pair(item, loop.index) }}
+        {% else %}
+            <section class="comparison-empty-state" aria-labelledby="comparison-empty-title">
+                <span class="review-status review-status-complete">Очередь завершена</span>
+                {% if query or confidence %}
+                    <h2 id="comparison-empty-title">По текущему фильтру пары не найдены</h2>
+                    <p>Измените условия поиска или вернитесь ко всей очереди.</p>
+                    <a class="btn btn-outline-secondary" href="{{ url_for('product_suggestions') }}">Сбросить фильтры</a>
+                {% else %}
+                    <h2 id="comparison-empty-title">Подозрительных пар сейчас нет</h2>
+                    <p>Новые предложения появятся автоматически, когда анализ найдёт достаточно похожие товары.</p>
+                    <a class="btn btn-outline-secondary" href="{{ url_for('products_merge') }}">Открыть объединение вручную</a>
+                {% endif %}
+            </section>
+        {% endfor %}
+
+        <section class="comparison-empty-state comparison-local-empty" data-local-empty hidden aria-live="polite">
+            <span class="review-status review-status-complete">Просмотр завершён</span>
+            <h2>Все показанные пары просмотрены</h2>
+            <p>Верните пары обновлением страницы или измените фильтр.</p>
+        </section>
+    </section>
+</article>
 
 <script>
-document.querySelectorAll('[data-dismiss]').forEach(button => {
+document.querySelectorAll('[data-dismiss-pair]').forEach(button => {
     button.addEventListener('click', () => {
-        const card = button.closest('[data-card]');
-        if (!card) return;
-        card.remove();
-        const count = document.querySelectorAll('[data-card]').length;
-        document.getElementById('suggestionCount').textContent = count;
+        const pair = button.closest('[data-comparison-pair]');
+        if (!pair) return;
+        pair.remove();
+        const count = document.querySelectorAll('[data-comparison-pair]').length;
+        const countNode = document.getElementById('suggestionCount');
+        if (countNode) countNode.textContent = count;
+        if (count === 0) document.querySelector('[data-local-empty]')?.removeAttribute('hidden');
     });
 });
 </script>

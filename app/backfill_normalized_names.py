@@ -1,14 +1,93 @@
 import argparse
+import sqlite3
 import sys
+from collections import Counter
+from contextlib import closing
+from pathlib import Path
 
-from app.db import get_connection
+import app.db as db
 from app.product_normalizer import normalize_product_name
 
 
-def backfill_normalized_names(dry_run: bool = False) -> dict:
-    stats = {"checked": 0, "updated": 0, "skipped": 0, "errors": 0}
+TARGET_FIELD = "normalized_name"
 
-    with get_connection() as conn:
+
+def create_backup(backup_dir: Path | None = None) -> Path:
+    return db.backup_database("normalized_backfill", backup_dir)
+
+
+def _row_after(row, normalized: str) -> dict:
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "canonical_name": row["canonical_name"],
+        "before": row["normalized_name"],
+        "after": normalized,
+    }
+
+
+def _read_only_connection():
+    path = Path(db.DB_PATH).resolve()
+    if not path.exists():
+        raise FileNotFoundError(f"Database not found: {path}")
+    conn = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def plan_normalized_name_backfill(example_limit: int = 20) -> dict:
+    stats = Counter()
+    examples = []
+    unresolved = []
+
+    with closing(_read_only_connection()) as conn:
+        rows = conn.execute("""
+            SELECT id, name, canonical_name, normalized_name
+            FROM items
+            ORDER BY id
+        """).fetchall()
+
+    stats["checked"] = len(rows)
+    for row in rows:
+        current = (row["normalized_name"] or "").strip()
+        if current:
+            stats["already_filled"] += 1
+            continue
+
+        normalized = normalize_product_name(row["name"])
+        if not normalized:
+            stats["unresolved"] += 1
+            if len(unresolved) < example_limit:
+                unresolved.append({"id": row["id"], "name": row["name"]})
+            continue
+
+        stats["to_update"] += 1
+        if len(examples) < example_limit:
+            examples.append(_row_after(row, normalized))
+
+    return {
+        "target_fields": [TARGET_FIELD],
+        "stats": dict(stats),
+        "examples": examples,
+        "unresolved_examples": unresolved,
+    }
+
+
+def backfill_normalized_names(*, apply: bool = False, backup_dir: Path | None = None, example_limit: int = 20) -> dict:
+    plan = plan_normalized_name_backfill(example_limit=example_limit)
+    stats = Counter(plan["stats"])
+    stats["errors"] = 0
+    backup_path = None
+
+    if not apply:
+        plan["stats"] = dict(stats)
+        plan["dry_run"] = True
+        plan["backup_path"] = None
+        return plan
+
+    with db.get_connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        backup_path = create_backup(backup_dir)
         rows = conn.execute("""
             SELECT id, name
             FROM items
@@ -16,30 +95,48 @@ def backfill_normalized_names(dry_run: bool = False) -> dict:
             ORDER BY id
         """).fetchall()
 
-        stats["checked"] = len(rows)
         try:
             for item_id, name in rows:
                 normalized = normalize_product_name(name)
                 if not normalized:
-                    stats["skipped"] += 1
                     continue
-                if not dry_run:
-                    conn.execute(
-                        "UPDATE items SET normalized_name = ? WHERE id = ?",
-                        (normalized, item_id),
-                    )
-                stats["updated"] += 1
+                conn.execute(
+                    "UPDATE items SET normalized_name = ? WHERE id = ?",
+                    (normalized, item_id),
+                )
 
-            if dry_run:
-                conn.rollback()
-            else:
-                conn.commit()
+            conn.commit()
         except Exception:
             conn.rollback()
             stats["errors"] += 1
             raise
 
-    return stats
+    plan["stats"] = dict(stats)
+    plan["dry_run"] = False
+    plan["backup_path"] = str(backup_path)
+    return plan
+
+
+def print_report(result: dict) -> None:
+    stats = result["stats"]
+    mode = "dry-run" if result["dry_run"] else "apply"
+    print(f"Mode: {mode}")
+    print(f"Target fields: {', '.join(result['target_fields'])}")
+    print(f"Rows checked: {stats.get('checked', 0)}")
+    print(f"Rows to update: {stats.get('to_update', 0)}")
+    print(f"Already filled: {stats.get('already_filled', 0)}")
+    print(f"Unresolved: {stats.get('unresolved', 0)}")
+    if result.get("backup_path"):
+        print(f"Backup: {result['backup_path']}")
+
+    print("Examples:")
+    for item in result["examples"]:
+        print(f"  #{item['id']}: {item['before']!r} -> {item['after']!r} ({item['name']})")
+
+    if result["unresolved_examples"]:
+        print("Unresolved examples:")
+        for item in result["unresolved_examples"]:
+            print(f"  #{item['id']}: {item['name']!r}")
 
 
 def main() -> None:
@@ -47,14 +144,19 @@ def main() -> None:
         sys.stdout.reconfigure(encoding="utf-8")
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dry-run", action="store_true")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--apply", action="store_true", help="Write changes. Default is dry-run.")
+    mode.add_argument("--dry-run", action="store_true", help="Accepted for compatibility; dry-run is default.")
+    parser.add_argument("--backup-dir", type=Path)
+    parser.add_argument("--examples", type=int, default=20)
     args = parser.parse_args()
 
-    stats = backfill_normalized_names(dry_run=args.dry_run)
-    print(f"Всего проверено: {stats['checked']}")
-    print(f"Обновлено: {stats['updated']}")
-    print(f"Пропущено: {stats['skipped']}")
-    print(f"Ошибок: {stats['errors']}")
+    result = backfill_normalized_names(
+        apply=args.apply,
+        backup_dir=args.backup_dir,
+        example_limit=args.examples,
+    )
+    print_report(result)
 
 
 if __name__ == "__main__":

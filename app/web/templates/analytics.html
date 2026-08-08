@@ -1,239 +1,175 @@
 {% extends "base.html" %}
 {% block title %}Аналитика{% endblock %}
+{% block body_class %}analytics-page{% endblock %}
 {% block content %}
-<section class="page-header">
-    <div>
-        <p class="eyebrow">Обзор</p>
-        <h1>Аналитика</h1>
-    </div>
-    <div class="analytics-metrics" aria-label="Ключевые показатели">
-        <div class="total-chip">
-            <span>Всего</span>
-            <strong id="totalSpent" aria-live="polite">—</strong>
+<article class="analytics-workspace" aria-labelledby="analytics-title" data-analytics-workspace>
+    <header class="page-header analytics-page-header">
+        <div>
+            <h1 id="analytics-title">Аналитика</h1>
+            <p>Исследуйте распределение расходов и динамику выбранного среза.</p>
         </div>
-        <div class="total-chip">
-            <span>В среднем / месяц</span>
-            <strong id="monthlyAverage" aria-live="polite">—</strong>
-        </div>
-    </div>
-</section>
+    </header>
 
-<section class="surface filters-surface">
-    <div class="filters-grid">
-        <label>
-            <span>Начало</span>
-            <input type="date" class="form-control" id="startDate" name="start" autocomplete="off">
-        </label>
-        <label>
-            <span>Конец</span>
-            <input type="date" class="form-control" id="endDate" name="end" autocomplete="off">
-        </label>
-        <label>
-            <span>Магазин</span>
-            <select class="form-select" id="storeFilter" name="store" autocomplete="off">
-                <option value="">Все</option>
-                <option>Maxima</option>
-                <option>Rimi</option>
-                <option>Lidl</option>
-            </select>
-        </label>
-        <label>
-            <span>Категория</span>
-            <select class="form-select" id="categoryFilter" name="category" autocomplete="off">
-                <option value="">Все</option>
-                {% for category in category_options %}
-                    <option value="{{ category }}">{{ category }}</option>
-                {% endfor %}
-            </select>
-        </label>
-        <label>
-            <span>Товар</span>
-            <input type="search" id="itemFilter" name="item" class="form-control" placeholder="Название…" autocomplete="off">
-        </label>
-        <button class="btn btn-primary" id="applyFilters">
-            <i class="bi bi-funnel" aria-hidden="true"></i>
-            Применить
+    <section class="analytics-filter-toolbar" aria-labelledby="analytics-filters-title">
+        <div class="analytics-toolbar-heading">
+            <div>
+                <h2 id="analytics-filters-title">Срез данных</h2>
+                <p id="analyticsFilterState">Все доступные покупки</p>
+            </div>
+        </div>
+        <form class="analytics-filter-grid" id="analyticsFilters">
+            <label>
+                <span>Начало</span>
+                <input id="startDate" type="date" class="form-control" name="start" value="{{ request.args.get('start', '') }}" autocomplete="off">
+            </label>
+            <label>
+                <span>Конец</span>
+                <input id="endDate" type="date" class="form-control" name="end" value="{{ request.args.get('end', '') }}" autocomplete="off">
+            </label>
+            <label>
+                <span>Магазин</span>
+                <select class="form-select" id="storeFilter" name="store" autocomplete="off">
+                    <option value="" {% if not request.args.get('store') %}selected{% endif %}>Все магазины</option>
+                    <option value="Maxima" {% if request.args.get('store', '')|lower == 'maxima' %}selected{% endif %}>Maxima</option>
+                    <option value="Rimi" {% if request.args.get('store', '')|lower == 'rimi' %}selected{% endif %}>Rimi</option>
+                    <option value="Lidl" {% if request.args.get('store', '')|lower == 'lidl' %}selected{% endif %}>Lidl</option>
+                </select>
+            </label>
+            <label>
+                <span>Категория</span>
+                <select class="form-select" id="categoryFilter" name="category" autocomplete="off">
+                    <option value="" {% if not request.args.get('category') %}selected{% endif %}>Все категории</option>
+                    {% for category in category_options %}
+                    <option value="{{ category }}" {% if request.args.get('category') == category %}selected{% endif %}>{{ category }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+            <label class="analytics-item-filter">
+                <span>Товар</span>
+                <input type="search" id="itemFilter" name="item" class="form-control" value="{{ request.args.get('item', '') }}" placeholder="Название товара" autocomplete="off">
+            </label>
+            <button class="btn btn-primary analytics-apply" id="applyFilters" type="submit">
+                <i class="bi bi-funnel" aria-hidden="true"></i>
+                Применить
+            </button>
+        </form>
+    </section>
+
+    <section class="analytics-summary-band" aria-labelledby="analytics-summary-title">
+        <div class="analytics-slice-summary">
+            <span>Текущий срез</span>
+            <h2 id="analytics-summary-title">Все покупки</h2>
+            <p id="analyticsSliceDescription">Загрузка доступных периодов и значений…</p>
+        </div>
+        <dl>
+            <div class="analytics-summary-primary">
+                <dt>Сумма</dt>
+                <dd id="totalSpent" aria-live="polite">—</dd>
+            </div>
+            <div>
+                <dt>В среднем за месяц</dt>
+                <dd id="monthlyAverage" aria-live="polite">—</dd>
+            </div>
+        </dl>
+    </section>
+
+    <section class="analytics-insight-note" aria-labelledby="analytics-insight-title">
+        <span>Краткий вывод</span>
+        <h2 id="analytics-insight-title" class="visually-hidden">Краткий вывод по выбранному срезу</h2>
+        <ul id="analyticsInsightList" aria-live="polite">
+            <li>Сводка рассчитывается по выбранным данным…</li>
+        </ul>
+        <p id="analyticsInsightEmpty" hidden>В выбранном срезе нет данных для аналитического вывода.</p>
+    </section>
+
+    <section class="analytics-primary-panel" aria-labelledby="spend-dynamics-title">
+        <header class="analytics-section-header">
+            <div>
+                <span>Главный вопрос</span>
+                <h2 id="spend-dynamics-title">Как менялись расходы?</h2>
+                <p>Сумма покупок по каждому доступному месяцу выбранного среза.</p>
+            </div>
+            <output id="analyticsStatus" class="analytics-update-status" aria-live="polite"></output>
+        </header>
+        <div class="analytics-chart-frame analytics-chart-frame-primary" data-chart-frame="months">
+            <canvas id="monthChart" role="img" aria-label="Динамика расходов по месяцам"></canvas>
+            <p class="analytics-chart-empty" data-chart-empty hidden>Для выбранного среза нет помесячных данных.</p>
+        </div>
+        <dl class="analytics-period-values" id="monthValueList" aria-label="Значения расходов по месяцам"></dl>
+        <button
+            type="button"
+            class="analytics-period-toggle"
+            id="monthValueToggle"
+            aria-controls="monthValueList"
+            aria-expanded="false"
+            hidden
+        >
+            Показать всю историю
         </button>
-    </div>
-</section>
+    </section>
 
-<section class="charts-grid">
-    <div class="surface chart-card">
-        <div class="section-title">
-            <h2>Категории</h2>
+    <div class="analytics-secondary-grid">
+        <section class="analytics-secondary-panel" aria-labelledby="category-chart-title">
+            <header class="analytics-section-header">
+                <div>
+                    <span>Распределение</span>
+                    <h2 id="category-chart-title">На что распределились расходы?</h2>
+                    <p>Категории расположены по сумме — от большей к меньшей.</p>
+                </div>
+            </header>
+            <div class="analytics-chart-frame analytics-chart-frame-secondary" data-chart-frame="categories">
+                <canvas id="categoryChart" role="img" aria-label="Расходы по категориям"></canvas>
+                <p class="analytics-chart-empty" data-chart-empty hidden>В выбранном срезе нет категорий.</p>
+            </div>
+        </section>
+
+        <section class="analytics-secondary-panel" aria-labelledby="top-items-title">
+            <header class="analytics-section-header">
+                <div>
+                    <span>Состав</span>
+                    <h2 id="top-items-title">Какие товары сформировали основную сумму?</h2>
+                    <p>До десяти товаров с наибольшей суммой в текущем срезе.</p>
+                </div>
+            </header>
+            <div class="analytics-chart-frame analytics-chart-frame-secondary" data-chart-frame="top">
+                <canvas id="topItemsChart" role="img" aria-label="Товары с наибольшей суммой"></canvas>
+                <p class="analytics-chart-empty" data-chart-empty hidden>В выбранном срезе нет товарных позиций.</p>
+            </div>
+            <details class="analytics-product-links" id="topItemLinks">
+                <summary>Открыть профили товаров</summary>
+                <ul id="topItemList"></ul>
+            </details>
+        </section>
+    </div>
+
+    <section class="analytics-trend-panel" aria-labelledby="price-trend-title">
+        <header class="analytics-section-header">
+            <div>
+                <span>Локальное исследование</span>
+                <h2 id="price-trend-title">Как менялась цена конкретного товара?</h2>
+                <p>Выберите товар, чтобы увидеть существующую помесячную историю цены за единицу.</p>
+            </div>
+        </header>
+        <form class="analytics-trend-toolbar" id="analyticsTrendForm">
+            <label for="itemTrendInput">
+                <span>Товар</span>
+                <input type="search" id="itemTrendInput" name="trend_item" class="form-control" placeholder="Название товара" autocomplete="off">
+            </label>
+            <button class="btn btn-outline-primary" type="submit">
+                <i class="bi bi-graph-up" aria-hidden="true"></i>
+                Показать динамику
+            </button>
+        </form>
+        <div class="analytics-chart-frame analytics-chart-frame-trend" data-chart-frame="trend" data-state="empty">
+            <canvas id="trendChart" role="img" aria-label="Динамика цены выбранного товара" hidden></canvas>
+            <p id="trendMsg" class="analytics-chart-empty analytics-trend-empty" aria-live="polite">
+                Выберите товар — здесь появится его помесячная динамика цены за единицу.
+            </p>
         </div>
-        <div class="chart-frame">
-            <canvas id="categoryChart"></canvas>
-        </div>
-    </div>
-    <div class="surface chart-card">
-        <div class="section-title">
-            <h2>Месяцы</h2>
-        </div>
-        <div class="chart-frame">
-            <canvas id="monthChart"></canvas>
-        </div>
-    </div>
-</section>
+    </section>
+</article>
 
-<section class="surface chart-card wide-chart">
-    <div class="section-title">
-        <h2>Топ товаров</h2>
-    </div>
-    <div class="chart-frame chart-frame-wide">
-        <canvas id="topItemsChart"></canvas>
-    </div>
-    <div id="topItemLinks" class="link-strip">
-        <ul class="list-unstyled" id="topItemList"></ul>
-    </div>
-</section>
-
-<section class="surface chart-card wide-chart">
-    <div class="section-title">
-        <h2>Динамика цены</h2>
-    </div>
-    <div class="trend-toolbar">
-        <label class="visually-hidden" for="itemTrendInput">Товар для динамики цены</label>
-        <input type="search" id="itemTrendInput" name="trend_item" class="form-control" placeholder="Название товара…" autocomplete="off">
-        <button class="btn btn-outline-primary" onclick="loadTrendChart()">
-            <i class="bi bi-graph-up" aria-hidden="true"></i>
-            Показать
-        </button>
-    </div>
-    <div class="chart-frame chart-frame-wide">
-        <canvas id="trendChart"></canvas>
-        <p id="trendMsg" class="empty-message" aria-live="polite"></p>
-    </div>
-</section>
-
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels"></script>
-<script>
-let categoryChart, monthChart, topChart, trendChart;
-
-document.getElementById('applyFilters').addEventListener('click', loadAnalytics);
-
-async function loadAnalytics() {
-    const start = document.getElementById('startDate').value;
-    const end = document.getElementById('endDate').value;
-    const store = document.getElementById('storeFilter').value;
-    const category = document.getElementById('categoryFilter').value;
-    const item = document.getElementById('itemFilter').value;
-    const params = new URLSearchParams({ start, end, store, category, item });
-    const response = await fetch(`/analytics/data?${params.toString()}`);
-    const data = await response.json();
-
-    document.getElementById("totalSpent").textContent = data.total_spent.toFixed(2) + " €";
-    document.getElementById("monthlyAverage").textContent = data.monthly_average.toFixed(2) + " €";
-    const colors = ['#2563eb','#16a34a','#f59e0b','#dc2626','#7c3aed','#0891b2','#ea580c','#0f766e','#4b5563','#be123c'];
-
-    if (categoryChart) categoryChart.destroy();
-    if (monthChart) monthChart.destroy();
-    if (topChart) topChart.destroy();
-
-    categoryChart = new Chart(document.getElementById('categoryChart'), {
-        type: 'doughnut',
-        data: {
-            labels: data.categories.labels,
-            datasets: [{ data: data.categories.values, backgroundColor: colors, borderWidth: 0 }]
-        },
-        options: {
-            maintainAspectRatio: false,
-            cutout: '62%',
-            plugins: {
-                legend: { position: 'bottom' },
-                datalabels: { display: false }
-            }
-        },
-        plugins: [ChartDataLabels]
-    });
-
-    monthChart = new Chart(document.getElementById('monthChart'), {
-        type: 'line',
-        data: {
-            labels: data.months.labels,
-            datasets: [{
-                label: 'Расходы',
-                data: data.months.values,
-                borderColor: '#2563eb',
-                backgroundColor: 'rgba(37, 99, 235, .08)',
-                fill: true,
-                tension: .25,
-                pointRadius: 3
-            }]
-        },
-        options: {
-            maintainAspectRatio: false,
-            plugins: { legend: { display: false }, datalabels: { display: false } },
-            scales: { y: { beginAtZero: true } }
-        },
-        plugins: [ChartDataLabels]
-    });
-
-    topChart = new Chart(document.getElementById('topItemsChart'), {
-        type: 'bar',
-        data: {
-            labels: data.top.labels,
-            datasets: [{ label: 'Сумма', data: data.top.values, backgroundColor: '#0f766e', borderRadius: 6 }]
-        },
-        options: {
-            maintainAspectRatio: false,
-            plugins: { legend: { display: false }, datalabels: { display: false } },
-            scales: { y: { beginAtZero: true } }
-        },
-        plugins: [ChartDataLabels]
-    });
-
-    const listEl = document.getElementById('topItemList');
-    listEl.innerHTML = "";
-    data.top.labels.forEach(name => {
-        const li = document.createElement("li");
-        const a = document.createElement("a");
-        a.href = "/item/" + encodeURIComponent(name);
-        a.textContent = name;
-        li.appendChild(a);
-        listEl.appendChild(li);
-    });
-}
-
-async function loadTrendChart() {
-    const itemName = document.getElementById('itemTrendInput').value.trim();
-    if (!itemName) return;
-
-    const res = await fetch(`/analytics/item_trend?item=${encodeURIComponent(itemName)}`);
-    const data = await res.json();
-
-    if (trendChart) trendChart.destroy();
-
-    if (!data || data.labels.length === 0) {
-        document.getElementById('trendMsg').textContent = "Нет данных";
-        return;
-    }
-
-    document.getElementById('trendMsg').textContent = "";
-    trendChart = new Chart(document.getElementById('trendChart'), {
-        type: 'line',
-        data: {
-            labels: data.labels,
-            datasets: [{
-                label: "Цена за единицу",
-                data: data.values.map(v => (isFinite(v) && v > 0 ? v : null)),
-                borderColor: '#0f766e',
-                backgroundColor: 'rgba(15, 118, 110, .08)',
-                fill: true,
-                tension: .25
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: { legend: { display: false }, datalabels: { display: false } },
-            scales: { y: { beginAtZero: true } }
-        },
-        plugins: [ChartDataLabels]
-    });
-}
-
-loadAnalytics();
-</script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels" defer></script>
+<script src="{{ url_for('static', filename='analytics.js') }}" defer></script>
 {% endblock %}

@@ -6,9 +6,11 @@ from pathlib import Path
 
 import pdfplumber
 
-from app.category_keywords import categorize_from_name
+from app.category_keywords import categorize_with_source
 from app.config import PDF_IMPORT_DIR, ensure_data_dirs
 from app.db import add_receipt_with_items, create_tables
+from app.price_model import derive_price_data
+from app.product_normalizer import normalize_product_name
 from app.receipt_parser import parse_receipt
 
 
@@ -147,9 +149,23 @@ def prepare_receipt_data(file_path: str | Path) -> dict:
         return {"status": "error", "error": "Нет товаров в чеке"}
 
     for item in data["items"]:
-        item["category"] = categorize_from_name(item.get("name", ""))
-        item["price"] = item.get("price") or 0
-        item["quantity"] = item.get("quantity") or 1
+        name = item.get("name", "")
+        normalized_name = normalize_product_name(name)
+        price_data = derive_price_data(
+            name=name,
+            normalized_name=normalized_name,
+            quantity=1 if item.get("quantity") is None else item.get("quantity"),
+            line_total=0 if item.get("price") is None else item.get("price"),
+            unit_price=item.get("unit_price"),
+            quantity_unit=item.get("quantity_unit"),
+            package_size=item.get("package_size"),
+            package_unit=item.get("package_unit"),
+            source="parser" if item.get("quantity_unit") else "derived",
+        )
+        item["category"], item["category_source"] = categorize_with_source(item.get("name", ""))
+        item["price"] = 0 if item.get("price") is None else item.get("price")
+        item["quantity"] = 1 if item.get("quantity") is None else item.get("quantity")
+        item.update(price_data.to_dict())
 
     total = data.get("total")
     if total is None or total == 0:

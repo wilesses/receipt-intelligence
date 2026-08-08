@@ -1,0 +1,109 @@
+{% macro selection_row(product) -%}
+{% set product_name = product[0] %}
+{% set row_count = product[1] %}
+{% set receipt_count = product[2] %}
+{% set canonical_names = product[3] %}
+<tr class="selection-row" data-selection-row data-selected="false">
+    <td class="selection-check" data-label="Выбор">
+        <label class="selection-control">
+            <input
+                class="form-check-input"
+                type="checkbox"
+                name="selected_names"
+                value="{{ product_name }}"
+                data-item-count="{{ row_count }}"
+                data-receipt-count="{{ receipt_count }}"
+                aria-label="Выбрать {{ product_name }}"
+            >
+            <span class="selection-state" data-selected-state>Не выбран</span>
+        </label>
+    </td>
+    <td class="selection-identity" data-label="Исходное название">
+        <a href="{{ url_for('item_profile', name=product_name) }}">{{ product_name }}</a>
+        <span>Исходное название товарной группы</span>
+    </td>
+    <td class="selection-number" data-label="Строк">{{ row_count }}</td>
+    <td class="selection-number" data-label="Чеков">{{ receipt_count }}</td>
+    <td class="selection-canonical" data-label="Каноническое имя сейчас">
+        {% if canonical_names %}
+            <span>{{ canonical_names }}</span>
+        {% else %}
+            <span class="selection-unavailable">Не задано</span>
+        {% endif %}
+    </td>
+</tr>
+{%- endmacro %}
+
+{% macro selected_set_summary() -%}
+<section class="selected-set-summary" aria-labelledby="selected-set-title">
+    <header>
+        <div>
+            <p>Выбранный набор</p>
+            <h2 id="selected-set-title"><span data-selected-count>0</span> товаров</h2>
+        </div>
+        <button class="btn btn-outline-secondary" type="button" data-reset-selection>
+            Сбросить
+        </button>
+    </header>
+
+    <div class="selected-impact" aria-live="polite">
+        <dl>
+            <div>
+                <dt>Строк будет затронуто</dt>
+                <dd data-affected-rows>0</dd>
+            </div>
+            <div>
+                <dt>Связей с чеками</dt>
+                <dd data-affected-receipts>0</dd>
+            </div>
+        </dl>
+        <p>Число связей суммируется по товарам; один чек может встречаться в наборе несколько раз.</p>
+    </div>
+
+    <div class="selected-names">
+        <h3>В набор входят</h3>
+        <ul data-selected-list>
+            <li data-selection-placeholder>Товары ещё не выбраны.</li>
+        </ul>
+    </div>
+</section>
+{%- endmacro %}
+
+{% macro merge_command_band(query) -%}
+<aside class="merge-command-band" aria-labelledby="merge-command-title">
+    {{ selected_set_summary() }}
+
+    <div class="merge-target">
+        <div class="merge-command-heading">
+            <p>Результат</p>
+            <h2 id="merge-command-title">Одно каноническое имя</h2>
+        </div>
+
+        <label for="canonical-name">
+            <span>Каноническое название</span>
+            <input
+                class="form-control"
+                id="canonical-name"
+                type="text"
+                name="canonical_name"
+                autocomplete="off"
+                required
+                aria-describedby="canonical-name-help canonical-name-error"
+            >
+        </label>
+        <p id="canonical-name-help" class="merge-field-help">Все выбранные исходные названия будут сведены к этому имени.</p>
+        <p id="canonical-name-error" class="merge-field-error" data-canonical-error aria-live="polite"></p>
+    </div>
+
+    <div class="merge-consequence">
+        <h3>Что изменится</h3>
+        <p>Выбранные товарные строки получат указанное каноническое название. Исходные названия останутся частью сохранённых строк чеков.</p>
+    </div>
+
+    <input type="hidden" name="q" value="{{ query }}">
+    <button class="btn btn-primary merge-submit" type="submit" data-merge-submit>
+        <i class="bi bi-intersect" aria-hidden="true"></i>
+        Объединить выбранные
+    </button>
+</aside>
+{%- endmacro %}

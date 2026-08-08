@@ -1,0 +1,176 @@
+{% from "_review_components.html" import review_status %}
+
+{% macro coverage_band(summary) -%}
+{% set total = summary[0] or 0 %}
+{% set normalized = summary[3] or 0 %}
+{% set coverage = (normalized * 100 / total) if total else 0 %}
+<section class="coverage-band" aria-labelledby="coverage-title">
+    <h2 id="coverage-title" class="visually-hidden">Покрытие нормализованных цен</h2>
+    <dl class="coverage-band-values">
+        <div class="coverage-band-primary">
+            <dt>Покрытие нормализованной ценой</dt>
+            <dd>
+                <strong>{{ "%.1f"|format(coverage) }}%</strong>
+                <span>{{ normalized }} из {{ total }} строк</span>
+            </dd>
+        </div>
+        <div{% if not summary[7] %} class="is-zero"{% endif %}>
+            <dt>Без нормализованной единицы</dt>
+            <dd>{{ summary[7] or 0 }}</dd>
+        </div>
+        <div{% if not summary[8] %} class="is-zero"{% endif %}>
+            <dt>Низкая уверенность</dt>
+            <dd>{{ summary[8] or 0 }}</dd>
+        </div>
+        <div{% if not summary[9] %} class="is-zero"{% endif %}>
+            <dt>Подозрительные значения</dt>
+            <dd>{{ summary[9] or 0 }}</dd>
+        </div>
+    </dl>
+
+    <details class="coverage-details">
+        <summary>Техническое покрытие цены</summary>
+        <dl>
+            <div><dt>Итог строки доступен</dt><dd>{{ summary[1] or 0 }}</dd></div>
+            <div><dt>Цена за единицу доступна</dt><dd>{{ summary[2] or 0 }}</dd></div>
+            <div><dt>Нормализовано в €/л</dt><dd>{{ summary[4] or 0 }}</dd></div>
+            <div><dt>Нормализовано в €/кг</dt><dd>{{ summary[5] or 0 }}</dd></div>
+            <div><dt>Нормализовано в €/шт.</dt><dd>{{ summary[6] or 0 }}</dd></div>
+        </dl>
+    </details>
+</section>
+{%- endmacro %}
+
+{% macro problem_selector(issue_filter, limit) -%}
+{% set problems = [
+    ("all", "Все проблемы"),
+    ("unknown", "Неизвестная единица"),
+    ("low_confidence", "Низкая уверенность"),
+    ("missing_package", "Нет размера упаковки"),
+    ("suspicious", "Подозрительная цена")
+] %}
+<section class="problem-selector" aria-labelledby="problem-selector-title">
+    <header>
+        <div>
+            <h2 id="problem-selector-title">Тип проблемы</h2>
+            <p>Выберите диагностический срез перед просмотром строк.</p>
+        </div>
+        {% if issue_filter != "all" %}
+            <a class="problem-selector-reset" href="{{ url_for('price_data_quality', limit=limit) }}">Сбросить фильтр</a>
+        {% endif %}
+    </header>
+
+    <nav class="problem-selector-options" aria-label="Фильтр по типу проблемы">
+        {% for value, label in problems %}
+            <a
+                class="problem-selector-option{% if issue_filter == value %} is-active{% endif %}"
+                href="{{ url_for('price_data_quality', filter=value, limit=limit) }}"
+                {% if issue_filter == value %}aria-current="page"{% endif %}
+            >
+                <span>{{ label }}</span>
+                {% if issue_filter == value %}<small>Выбрано</small>{% endif %}
+            </a>
+        {% endfor %}
+    </nav>
+
+    <form method="get" action="{{ url_for('price_data_quality') }}" class="problem-limit-form">
+        <input type="hidden" name="filter" value="{{ issue_filter }}">
+        <label for="price-quality-limit">
+            <span>Строк на странице</span>
+            <select class="form-select" id="price-quality-limit" name="limit">
+                {% for value in [25, 50, 100, 200] %}
+                    <option value="{{ value }}" {% if limit == value %}selected{% endif %}>{{ value }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <button class="btn btn-outline-secondary" type="submit">Обновить</button>
+    </form>
+</section>
+{%- endmacro %}
+
+{% macro diagnostic_explanation(issue_filter) -%}
+<aside class="diagnostic-explanation" aria-labelledby="diagnostic-explanation-title">
+    <h3 id="diagnostic-explanation-title">
+        {% if issue_filter == "unknown" %}Неизвестная единица
+        {% elif issue_filter == "low_confidence" %}Низкая уверенность
+        {% elif issue_filter == "missing_package" %}Нет размера упаковки
+        {% elif issue_filter == "suspicious" %}Подозрительная цена
+        {% else %}Как читать этот набор
+        {% endif %}
+    </h3>
+    <p>
+        {% if issue_filter == "unknown" %}Единица количества не определена, поэтому цену нельзя надёжно сравнивать с покупками в килограммах, литрах или штуках. Проверьте исходное название и количество.
+        {% elif issue_filter == "low_confidence" %}Уверенность расчёта отсутствует или ниже 75%. Проверьте количество, упаковку и нормализованное значение по исходной строке чека.
+        {% elif issue_filter == "missing_package" %}Штучная позиция не содержит размера упаковки. Проверьте, указан ли объём или вес в исходном названии товара.
+        {% elif issue_filter == "suspicious" %}Нормализованная цена равна нулю, отрицательна или превышает 10 000. Сопоставьте её с итогом строки и единицей измерения.
+        {% else %}Здесь собраны строки с отсутствующими ценовыми полями, неопределённой нормализованной единицей, недостаточной уверенностью или подозрительным значением. Начните с товара и типа проблемы, затем сверяйте числовые подтверждения.
+        {% endif %}
+    </p>
+</aside>
+{%- endmacro %}
+
+{% macro diagnostic_status(row, issue_filter) -%}
+{% if issue_filter == "suspicious" or (row[10] is not none and (row[10] > 10000 or row[10] <= 0)) %}
+    {{ review_status("Подозрительная цена", "attention") }}
+    <p>Нормализованное значение выходит за допустимый диапазон текущей проверки.</p>
+{% elif issue_filter == "unknown" or not row[5] or row[5] == "unknown" %}
+    {{ review_status("Неизвестная единица", "attention") }}
+    <p>Единица количества не определена.</p>
+{% elif issue_filter == "missing_package" %}
+    {{ review_status("Нет размера упаковки", "attention") }}
+    <p>Штучная позиция не содержит размера упаковки.</p>
+{% elif issue_filter == "low_confidence" or row[12] is none or row[12] < 0.75 %}
+    {{ review_status("Низкая уверенность", "attention") }}
+    <p>Уверенность расчёта отсутствует или ниже 75%.</p>
+{% elif row[10] is none or not row[11] or row[11] == "unknown" %}
+    {{ review_status("Цена не нормализована", "attention") }}
+    <p>Нормализованная цена или её единица недоступна.</p>
+{% else %}
+    {{ review_status("Неполная исходная цена", "attention") }}
+    <p>Итог строки или цена за единицу недоступны.</p>
+{% endif %}
+{%- endmacro %}
+
+{% macro diagnostic_row(row, issue_filter) -%}
+{% set quantity_units = {"piece": "шт.", "kg": "кг", "g": "г", "l": "л", "ml": "мл"} %}
+{% set normalized_units = {"eur_per_l": "€/л", "eur_per_kg": "€/кг", "eur_per_piece": "€/шт."} %}
+<tr class="diagnostic-row" data-diagnostic-row>
+    <td class="diagnostic-product" data-label="Товар">
+        <strong>{{ row[0] }}</strong>
+        <span>{{ row[2] or "Магазин не указан" }} · {{ row[3] or "Дата не указана" }}</span>
+    </td>
+    <td class="diagnostic-problem" data-label="Проблема">
+        {{ diagnostic_status(row, issue_filter) }}
+    </td>
+    <td class="diagnostic-price" data-label="Исходная цена">
+        <dl>
+            <div><dt>Итог</dt><dd>{% if row[6] is not none %}{{ "%.2f"|format(row[6]) }} €{% else %}<span class="diagnostic-unavailable">Недоступен</span>{% endif %}</dd></div>
+            <div><dt>За единицу</dt><dd>{% if row[7] is not none %}{{ "%.4f"|format(row[7]) }} €{% else %}<span class="diagnostic-unavailable">Недоступна</span>{% endif %}</dd></div>
+        </dl>
+    </td>
+    <td class="diagnostic-normalized" data-label="Нормализованная цена">
+        {% if row[10] is not none %}
+            <strong>{{ "%.4f"|format(row[10]) }}</strong>
+            <span>{{ normalized_units.get(row[11], row[11] or "Единица неизвестна") }}</span>
+        {% else %}
+            <span class="diagnostic-unavailable">Не рассчитана</span>
+        {% endif %}
+    </td>
+    <td class="diagnostic-quantity" data-label="Количество и единица">
+        <strong>{{ row[4] if row[4] is not none else "—" }}</strong>
+        <span>{{ quantity_units.get(row[5], row[5] or "Единица неизвестна") }}</span>
+    </td>
+    <td class="diagnostic-confidence" data-label="Уверенность">
+        {% if row[12] is not none %}
+            <strong>{{ "%.0f"|format(row[12] * 100) }}%</strong>
+            <span>расчёт модели цены</span>
+        {% else %}
+            <span class="diagnostic-unavailable">Не рассчитана</span>
+        {% endif %}
+    </td>
+    <td class="diagnostic-technical" data-label="Технические данные">
+        <a href="{{ url_for('view_receipt', receipt_id=row[1]) }}">Чек #{{ row[1] }}</a>
+        <span>Упаковка: {% if row[8] is not none %}{{ row[8] }} {{ row[9] or "" }}{% else %}не указана{% endif %}</span>
+    </td>
+</tr>
+{%- endmacro %}

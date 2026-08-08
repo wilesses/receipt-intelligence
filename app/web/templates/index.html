@@ -1,108 +1,215 @@
 {% extends "base.html" %}
-{% block title %}Чеки{% endblock %}
-{% block content %}
-<section class="page-header">
-    <div>
-        <p class="eyebrow">Расходы</p>
-        <h1>Чеки</h1>
-    </div>
-    <div class="toolbar">
-        <div class="search-control">
-            <i class="bi bi-search" aria-hidden="true"></i>
-            <label class="visually-hidden" for="searchInput">Поиск по магазину</label>
-            <input type="search" id="searchInput" name="store_search" class="form-control" placeholder="Магазин…" autocomplete="off">
-        </div>
-        <a href="{{ url_for('upload') }}" class="btn btn-primary">
-            <i class="bi bi-plus-lg" aria-hidden="true"></i>
-            Загрузить
-        </a>
-    </div>
-</section>
-
-<section class="summary-grid" aria-label="Сводка чеков">
-    <div class="metric-card">
-        <span>Чеков</span>
-        <strong>{{ receipts|length }}</strong>
-    </div>
-    <div class="metric-card">
-        <span>Сумма</span>
-        <strong>{{ "%.2f"|format(receipts|sum(attribute=4) if receipts else 0) }} €</strong>
-    </div>
-    <div class="metric-card">
-        <span>Последний</span>
-        <strong>{{ receipts[0][2] if receipts else '—' }}</strong>
-    </div>
-</section>
-
-<section class="surface">
-    <div class="table-responsive">
-        <table id="receiptTable" class="table app-table align-middle">
-            <thead>
-                <tr>
-                    <th scope="col" data-sort="id">ID <span class="sort-icon">↕</span></th>
-                    <th scope="col">PDF</th>
-                    <th scope="col" data-sort="date">Дата <span class="sort-icon">↕</span></th>
-                    <th scope="col">Магазин</th>
-                    <th scope="col" data-sort="total" class="text-end">Сумма <span class="sort-icon">↕</span></th>
-                    <th scope="col" class="text-end">Действие</th>
-                </tr>
-            </thead>
-            <tbody>
-            {% for receipt in receipts %}
-            <tr>
-                <td class="text-muted">#{{ receipt[0] }}</td>
-                <td class="file-cell" title="{{ receipt[1] if receipt[1] else '' }}">{{ receipt[1] if receipt[1] else '—' }}</td>
-                <td>{{ receipt[2] if receipt[2] else '—' }}</td>
-                <td>{{ receipt[3] if receipt[3] else '—' }}</td>
-                <td class="amount-cell">{{ "%.2f"|format(receipt[4] if receipt[4] else 0) }} €</td>
-                <td class="text-end">
-                    <a href="{{ url_for('view_receipt', receipt_id=receipt[0]) }}" class="btn btn-outline-primary btn-sm">
-                        <i class="bi bi-eye" aria-hidden="true"></i>
-                        Открыть
-                    </a>
-                </td>
-            </tr>
-            {% endfor %}
-            </tbody>
-        </table>
-    </div>
-    <div class="surface-footer">
-        <span id="receiptCount">Найдено чеков: {{ receipts|length }}</span>
-    </div>
-</section>
-
+{% block title %}{{ "Чеки" if view == "receipts" else "Интеллектуальная сводка" }}{% endblock %}
+{% block body_class %}{% if view != "receipts" %}home-story-page{% endif %}{% endblock %}
+{% block extra_head %}
+{% if view != "receipts" %}
+{% set head_story = dashboard.month_story %}
+{% set story_metadata = {
+    "month_key": head_story.month.start[:7] if head_story.month.start else "",
+    "signature": head_story.story_signature,
+    "last_receipt_id": head_story.highlighted_receipts[-1].id if head_story.highlighted_receipts else none,
+    "has_story": true if head_story.month.start and head_story.story_signature else false
+} %}
+<script id="story-metadata" type="application/json">{{ story_metadata|tojson }}</script>
 <script>
-const searchInput = document.getElementById('searchInput');
-const table = document.getElementById('receiptTable');
-const tbody = table.querySelector('tbody');
-const rows = Array.from(tbody.querySelectorAll('tr'));
-const receiptCount = document.getElementById('receiptCount');
+(() => {
+    try {
+        const metadata = JSON.parse(document.getElementById('story-metadata').textContent);
+        if (!/^\d{4}-\d{2}$/.test(metadata.month_key) || typeof metadata.signature !== 'string' || !metadata.signature) return;
+        const raw = localStorage.getItem(`receipt-intelligence:story:v1:${metadata.month_key}`);
+        if (!raw) return;
+        const saved = JSON.parse(raw);
+        const validLastReceiptId = saved.last_receipt_id === null
+            || (Number.isInteger(saved.last_receipt_id) && saved.last_receipt_id >= 0);
+        if (
+            saved.version !== 1
+            || typeof saved.signature !== 'string'
+            || !saved.signature
+            || typeof saved.viewed_at !== 'string'
+            || Number.isNaN(Date.parse(saved.viewed_at))
+            || !validLastReceiptId
+        ) return;
+        document.documentElement.dataset.storyBootstrapMode = saved.signature === metadata.signature ? 'repeat' : 'update';
+    } catch (_) {}
+})();
+</script>
+<link rel="stylesheet" href="{{ url_for('static', filename='home-story.css') }}">
+<script src="{{ url_for('static', filename='home-story.js') }}" defer></script>
+<script src="{{ url_for('static', filename='home-story-motion.js') }}" defer></script>
+{% endif %}
+{% endblock %}
+{% block content %}
+{% if view == "receipts" %}
+{% include "_receipt_workspace.html" %}
+{% else %}
+{% if available_story_months %}
+<div class="story-toolbar" aria-label="Настройки истории месяца">
+    <form method="get" action="{{ url_for('index') }}" class="story-month-control">
+        {% if story_debug %}<input type="hidden" name="story_debug" value="1">{% endif %}
+        <label for="storyMonthSelect">История месяца</label>
+        <select id="storyMonthSelect" name="month" onchange="this.form.submit()">
+            {% for available_month in available_story_months %}
+            <option value="{{ available_month.key }}"{% if available_month.key == selected_story_month %} selected{% endif %}>
+                {{ available_month.label }} · {{ available_month.receipt_count }} чек.
+            </option>
+            {% endfor %}
+        </select>
+        <button type="submit">Показать</button>
+    </form>
+</div>
+{% endif %}
+<article class="home-document{% if not dashboard.month_story.receipt_count %} is-empty{% endif %}" aria-labelledby="story-month-title" data-story-mode="new" data-story-presentation="{{ story_presentation }}">
+    {% set story = dashboard.month_story %}
+    <div class="story-narrative" data-story-narrative>
+    {% if story.receipt_count %}
+    <button type="button" class="story-skip" data-story-skip hidden>
+        Пропустить историю <i class="bi bi-arrow-down" aria-hidden="true"></i>
+    </button>
+    {% endif %}
+    <section class="story-act story-act-month" aria-labelledby="story-month-title" data-story-act="month">
+        <header class="story-opening">
+            <div class="story-opening-copy">
+                <p class="story-index">
+                    <span>01</span>
+                    <span class="story-mode-label story-mode-label-default">Месяц в чеках</span>
+                    <span class="story-mode-label story-mode-label-update">Месяц обновился</span>
+                </p>
+                <h1 id="story-month-title">{{ story.month.display_label }}</h1>
+                {% if story.receipt_count %}
+                <p class="story-period">
+                    Покупки с <time datetime="{{ story.actual_period.start }}">{{ story.actual_period.start }}</time>
+                    по <time datetime="{{ story.actual_period.end }}">{{ story.actual_period.end }}</time>
+                    · {{ story.receipt_count }} чек.
+                </p>
+                {% else %}
+                <p class="story-period">В выбранном месяце ещё нет чеков.</p>
+                {% endif %}
+            </div>
+            <div class="story-total-block" data-story-total-source aria-label="Итого за месяц {{ '%.2f'|format(story.total) }} евро">
+                <span>Итого за месяц</span>
+                <strong>{{ "%.2f"|format(story.total) }} <small>€</small></strong>
+            </div>
+        </header>
 
-updateCount(rows.length);
+        {% if story.receipt_count %}
+        <div class="story-month-details" id="story-month-details">
+        <div class="story-highlighted" aria-labelledby="story-highlights-title" data-story-receipt-stack>
+            <h3 class="story-section-label" id="story-highlights-title">Чеки, которые объясняют месяц</h3>
+            <p class="story-section-note">Связанные с выводом, крупные покупки и опорные даты периода.</p>
+            <ol role="list">
+                {% for receipt in story.highlighted_receipts %}
+                <li data-story-receipt>
+                    <a href="{{ receipt.href }}">
+                        <span class="story-receipt-date"><time datetime="{{ receipt.date }}">{{ receipt.date }}</time> · #{{ receipt.id }}</span>
+                        <strong>{{ receipt.store or "Без магазина" }}</strong>
+                        <span class="story-receipt-total">{{ "%.2f"|format(receipt.total) }} €</span>
+                    </a>
+                </li>
+                {% endfor %}
+            </ol>
+            {% if story.grouped_remainder.count %}
+            <p class="story-remainder" data-story-remainder>
+                Остальные {{ story.grouped_remainder.count }} чек.
+                <strong>{{ "%.2f"|format(story.grouped_remainder.total) }} €</strong>
+            </p>
+            {% endif %}
+        </div>
+        </div>
+        {% else %}
+        <div class="story-empty" role="status">
+            <p>После первого импорта здесь появятся реальные покупки и итог месяца.</p>
+            <a href="{{ url_for('upload') }}" class="story-primary-link">
+                Импортировать чек <i class="bi bi-arrow-up-right" aria-hidden="true"></i>
+            </a>
+        </div>
+        {% endif %}
 
-searchInput.addEventListener('input', () => {
-    const value = searchInput.value.toLowerCase();
-    let visibleRows = 0;
-    rows.forEach(row => {
-        const storeCell = row.cells[3].textContent.toLowerCase();
-        const visible = storeCell.includes(value);
-        row.style.display = visible ? '' : 'none';
-        if (visible) visibleRows++;
-    });
-    updateCount(visibleRows);
-});
+        <a class="story-archive-link" href="{{ url_for('index', view='receipts', period=story_period) }}">
+            Открыть чеки за этот месяц <i class="bi bi-arrow-up-right" aria-hidden="true"></i>
+        </a>
+    </section>
 
+    {% if story.receipt_count %}
+    <section class="story-act story-act-insight{% if not story.insight.evidence_events %} is-compact{% endif %}" aria-labelledby="story-insight-title" data-story-act="insight" data-story-meaning>
+        <header class="story-insight-copy">
+            <p class="story-index"><span>02</span> Главное за {{ story.month.display_label|lower }}</p>
+            <h2 id="story-insight-title">{{ story.insight.title }}</h2>
+            <button
+                type="button"
+                class="story-replay"
+                aria-expanded="false"
+                aria-controls="story-month-details story-insight-copy-details story-evidence-details"
+            >
+                Повторить историю <i class="bi bi-arrow-counterclockwise" aria-hidden="true"></i>
+            </button>
+            <div class="story-insight-copy-details" id="story-insight-copy-details">
+            <p class="story-metric">{{ story.insight.metric_confirmation }}</p>
+            <a class="story-destination-link" href="{{ story.insight.destination_link }}">
+                {{ story.insight.destination_label }} <i class="bi bi-arrow-right" aria-hidden="true"></i>
+            </a>
+            </div>
+        </header>
+
+        {% if story.insight.evidence_events %}
+        <div class="story-evidence" id="story-evidence-details" aria-labelledby="story-evidence-title">
+            <h3 class="story-section-label" id="story-evidence-title">На чём основан вывод</h3>
+            <p class="story-evidence-note">Эти чеки связаны с главным выводом. Сумма справа — итог каждого чека.</p>
+            <ol role="list">
+                {% for event in story.insight.evidence_events[:3] %}
+                <li>
+                    <a href="{{ event.href }}">
+                        <span><time datetime="{{ event.date }}">{{ event.date }}</time> · чек #{{ event.id }}</span>
+                        <strong>{{ event.store or "Без магазина" }}</strong>
+                        <span class="story-evidence-total"><small>Итого чека</small><b>{{ "%.2f"|format(event.total) }} €</b></span>
+                        <i class="bi bi-arrow-up-right" aria-hidden="true"></i>
+                    </a>
+                </li>
+                {% endfor %}
+            </ol>
+        </div>
+        {% else %}
+        <div id="story-evidence-details" hidden></div>
+        {% endif %}
+
+    </section>
+    {% endif %}
+    </div>
+
+    <div class="story-act-workspace" data-story-act="workspace">
+        {% include "_receipt_workspace.html" %}
+    </div>
+</article>
+{% if story_debug %}
+<aside class="story-debug" aria-label="Отладка истории" data-story-debug>
+    <b>Story debug</b>
+    <span>story mode <output data-debug-presentation>{{ story_presentation }}</output></span>
+    <span>visit mode <output data-debug-visit>new</output></span>
+    <span>phase <output data-debug-phase>ready</output></span>
+    <span>progress <output data-debug-progress>0.000</output></span>
+    <span>reduced <output data-debug-reduced>false</output></span>
+    <span>replay <output data-debug-replay>false</output></span>
+</aside>
+{% endif %}
+{% endif %}
+
+{% if receipts %}
+<script>
+const receiptList = document.getElementById('receiptTable');
+const rows = Array.from(receiptList.querySelectorAll('.receipt-document'));
 const sortStates = {};
-document.querySelectorAll('#receiptTable th[data-sort]').forEach(th => {
-    th.addEventListener('click', () => {
-        const index = Array.from(th.parentNode.children).indexOf(th);
-        const type = th.dataset.sort;
-        sortStates[index] = !sortStates[index];
+const sortLabels = {
+    id: 'чеку',
+    date: 'дате',
+    total: 'сумме',
+};
 
+document.querySelectorAll('.receipt-sort-controls .sort-button').forEach(button => {
+    button.addEventListener('click', () => {
+        const type = button.dataset.sort;
+        sortStates[type] = !sortStates[type];
         const sortedRows = [...rows].sort((a, b) => {
-            let valA = a.cells[index].textContent.trim().replace('#', '').replace('€', '');
-            let valB = b.cells[index].textContent.trim().replace('#', '').replace('€', '');
-
+            let valA = a.dataset[type] || '';
+            let valB = b.dataset[type] || '';
             if (type === 'id' || type === 'total') {
                 valA = parseFloat(valA) || 0;
                 valB = parseFloat(valB) || 0;
@@ -110,25 +217,32 @@ document.querySelectorAll('#receiptTable th[data-sort]').forEach(th => {
                 valA = new Date(valA);
                 valB = new Date(valB);
             }
-
-            return sortStates[index] ? (valA > valB ? 1 : -1) : (valA < valB ? 1 : -1);
+            return sortStates[type] ? (valA > valB ? 1 : -1) : (valA < valB ? 1 : -1);
         });
-
-        tbody.innerHTML = '';
-        sortedRows.forEach(row => tbody.appendChild(row));
-        updateSortIcons(th, sortStates[index]);
+        receiptList.innerHTML = '';
+        sortedRows.forEach(row => receiptList.appendChild(row));
+        document.querySelectorAll('.receipt-sort-controls .sort-button').forEach(sortButton => {
+            sortButton.querySelector('.sort-icon').textContent = '↕';
+            sortButton.removeAttribute('aria-label');
+        });
+        button.querySelector('.sort-icon').textContent = sortStates[type] ? '↑' : '↓';
+        button.setAttribute(
+            'aria-label',
+            `Сортировка по ${sortLabels[type]}: ${sortStates[type] ? 'по возрастанию' : 'по убыванию'}`
+        );
     });
 });
 
-function updateSortIcons(activeTh, ascending) {
-    document.querySelectorAll('#receiptTable th[data-sort] .sort-icon').forEach(icon => {
-        icon.textContent = '↕';
+document.querySelectorAll('.receipt-document-toggle').forEach(button => {
+    button.addEventListener('click', () => {
+        const detail = document.getElementById(button.getAttribute('aria-controls'));
+        const expanded = button.getAttribute('aria-expanded') === 'true';
+        button.setAttribute('aria-expanded', String(!expanded));
+        detail.hidden = expanded;
+        button.closest('.receipt-document').classList.toggle('is-expanded', !expanded);
     });
-    activeTh.querySelector('.sort-icon').textContent = ascending ? '↑' : '↓';
-}
-
-function updateCount(count) {
-    receiptCount.textContent = `Найдено чеков: ${count}`;
-}
+});
 </script>
+<script src="{{ url_for('static', filename='receipt-evidence-drawer.js') }}" defer></script>
+{% endif %}
 {% endblock %}

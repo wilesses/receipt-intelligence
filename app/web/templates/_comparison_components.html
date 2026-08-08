@@ -1,0 +1,93 @@
+{% from "_review_components.html" import review_status, review_reason %}
+
+{% macro comparison_side(item, side, pair_index) -%}
+{% set is_left = side == "a" %}
+{% set name = item.left_name if is_left else item.right_name %}
+{% set normalized = item.left_normalized if is_left else item.right_normalized %}
+{% set category = item.left_category if is_left else item.right_category %}
+{% set item_count = item.left_count if is_left else item.right_count %}
+{% set receipt_count = item.left_receipt_count if is_left else item.right_receipt_count %}
+<section class="comparison-product" data-comparison-side="{{ side }}" aria-labelledby="comparison-{{ pair_index }}-{{ side }}">
+    <p class="comparison-side-label">Товар {{ side|upper }}</p>
+    <h3 id="comparison-{{ pair_index }}-{{ side }}">{{ name }}</h3>
+    <dl class="comparison-product-fields">
+        <div>
+            <dt>Нормализованное имя</dt>
+            <dd>{{ normalized or "Не указано" }}</dd>
+        </div>
+        <div>
+            <dt>Категория</dt>
+            <dd>{{ category or "Без категории" }}</dd>
+        </div>
+        <div>
+            <dt>Использование</dt>
+            <dd>{{ item_count }} строк · {{ receipt_count }} чеков</dd>
+        </div>
+    </dl>
+    <a class="comparison-product-link" href="{{ url_for('item_profile', name=name) }}">Открыть товар {{ side|upper }}</a>
+</section>
+{%- endmacro %}
+
+{% macro comparison_pair(item, pair_index) -%}
+<article class="comparison-pair" data-comparison-pair>
+    <header class="comparison-pair-header">
+        <div>
+            <p class="comparison-pair-index">Пара {{ pair_index }}</p>
+            <h2>Это действительно один товар?</h2>
+        </div>
+        <div data-comparison-confidence>
+            {{ review_status(("%.0f"|format(item.score)) ~ "% сходства", "complete" if item.confidence == "high" else "attention") }}
+        </div>
+    </header>
+
+    <div class="comparison-products">
+        {{ comparison_side(item, "a", pair_index) }}
+        <div class="comparison-mobile-relation" aria-hidden="true">
+            <span>сравнивается с</span>
+        </div>
+        {{ comparison_side(item, "b", pair_index) }}
+    </div>
+
+    <section class="comparison-differences" aria-labelledby="comparison-differences-{{ pair_index }}">
+        <header class="comparison-section-heading">
+            <h3 id="comparison-differences-{{ pair_index }}">Что различается</h3>
+            <p>Различия отмечены словом и линией, а не только цветом.</p>
+        </header>
+        <dl class="comparison-signal-list">
+            <div class="{{ 'is-match' if item.left_normalized == item.right_normalized else 'is-difference' }}">
+                <dt>Нормализованное имя</dt>
+                <dd>{{ "Совпадает" if item.left_normalized == item.right_normalized else "Различается" }}</dd>
+            </div>
+            <div class="{{ 'is-match' if item.left_category == item.right_category else 'is-difference' }}">
+                <dt>Категория</dt>
+                <dd>{{ "Совпадает" if item.left_category == item.right_category else "Различается" }}</dd>
+            </div>
+            <div class="{{ 'is-match' if item.left_count == item.right_count else 'is-difference' }}">
+                <dt>Число строк</dt>
+                <dd>{{ "Совпадает" if item.left_count == item.right_count else "Различается" }}</dd>
+            </div>
+        </dl>
+    </section>
+
+    <div class="comparison-evidence-actions">
+        <details class="comparison-reasons">
+            <summary>Почему предложено сравнение</summary>
+            <ul class="review-reasons" aria-label="Причины предложения">
+                {% for reason in item.reasons %}
+                    {{ review_reason(reason) }}
+                {% endfor %}
+            </ul>
+        </details>
+
+        <div class="comparison-actions" aria-label="Действия для пары {{ pair_index }}">
+            <a class="btn btn-primary" href="{{ url_for('products_merge', q=item.merge_query) }}">
+                <i class="bi bi-diagram-3" aria-hidden="true"></i>
+                Перейти к объединению
+            </a>
+            <button class="btn btn-outline-secondary" type="button" data-dismiss-pair>
+                Пропустить сейчас
+            </button>
+        </div>
+    </div>
+</article>
+{%- endmacro %}

@@ -1,0 +1,266 @@
+{% set visible_spend = receipts|sum(attribute='total') %}
+{% set visible_item_count = receipts|sum(attribute='item_count') %}
+{% if store_search %}
+    {% set receipt_return_path = url_for('index', view='receipts', period=period, store_search=store_search) %}
+{% else %}
+    {% set receipt_return_path = url_for('index', view='receipts', period=period) %}
+{% endif %}
+<section class="receipts-workspace{% if view != 'receipts' %} is-story-workspace{% endif %}" id="receipt-workspace-start" aria-labelledby="receipt-list-title">
+    <div class="receipt-overview">
+        <header class="receipts-compact-header{% if view != 'receipts' %} is-story-continuation{% endif %}">
+            <div class="receipt-title-block">
+                {% if view == "receipts" %}
+                <h1 id="receipt-list-title">Архив чеков</h1>
+                <p>Найдите исходный чек по магазину, дате или сумме.</p>
+                {% else %}
+                <p class="receipt-mode-label">Рабочий архив</p>
+                <h2 id="receipt-list-title">Архив чеков</h2>
+                {% endif %}
+            </div>
+            <a href="{{ url_for('upload') }}" class="btn btn-primary receipts-import">
+                <i class="bi bi-cloud-arrow-up" aria-hidden="true"></i>
+                Импортировать
+            </a>
+        </header>
+
+        <section class="receipt-summary-band receipt-context" aria-label="Сводка выбранного набора">
+            <div class="receipt-summary-period">
+                <span>Период</span>
+                <strong>{{ dashboard.period.label }}</strong>
+            </div>
+            <dl class="receipt-summary-facts">
+                <div class="receipt-summary-total" data-story-total-destination>
+                    <dt>Сумма набора</dt>
+                    <dd>{{ "%.2f"|format(visible_spend) }} €</dd>
+                </div>
+                <div>
+                    <dt>Чеки</dt>
+                    <dd id="receiptCount" role="status" aria-live="polite">{{ receipts|length }}</dd>
+                </div>
+                <div>
+                    <dt>Позиции</dt>
+                    <dd>{{ visible_item_count }}</dd>
+                </div>
+            </dl>
+        </section>
+    </div>
+
+    <section class="receipt-filter-panel" aria-label="Фильтры архива">
+        <div class="receipt-filter-grid">
+            <form method="get" action="{{ url_for('index') }}" class="period-control receipt-period-control">
+                <input type="hidden" name="view" value="receipts">
+                {% if store_search %}<input type="hidden" name="store_search" value="{{ store_search }}">{% endif %}
+                <label for="receiptPeriodSelect">Период</label>
+                <select id="receiptPeriodSelect" name="period" class="form-select" onchange="this.form.submit()">
+                    {% if period.startswith("month:") %}
+                    <option value="{{ period }}" selected>{{ dashboard.period.label }}</option>
+                    {% endif %}
+                    <option value="current_month" {% if period == "current_month" %}selected{% endif %}>Текущий месяц</option>
+                    <option value="previous_month" {% if period == "previous_month" %}selected{% endif %}>Прошлый месяц</option>
+                    <option value="last_30_days" {% if period == "last_30_days" %}selected{% endif %}>Последние 30 дней</option>
+                    <option value="all_time" {% if period == "all_time" %}selected{% endif %}>За всё время</option>
+                </select>
+                <button type="submit" class="btn btn-outline-secondary receipt-period-submit">Применить</button>
+            </form>
+
+            <form method="get" action="{{ url_for('index') }}" class="receipt-search-form">
+                <input type="hidden" name="view" value="receipts">
+                <input type="hidden" name="period" value="{{ period }}">
+                <label for="searchInput">Магазин</label>
+                <div class="search-control">
+                    <button type="submit" class="command-search-button" aria-label="Найти чеки по магазину">
+                        <i class="bi bi-search" aria-hidden="true"></i>
+                    </button>
+                    <input
+                        type="search"
+                        id="searchInput"
+                        name="store_search"
+                        class="form-control"
+                        value="{{ store_search }}"
+                        placeholder="Название магазина"
+                        autocomplete="off"
+                    >
+                </div>
+            </form>
+
+            <div class="receipt-filter-state">
+                {% if store_search %}
+                <span>Поиск: <strong>{{ store_search }}</strong></span>
+                {% elif period != "current_month" %}
+                <span>Показан период: <strong>{{ dashboard.period.label }}</strong></span>
+                {% else %}
+                <span>Показаны все чеки текущего месяца</span>
+                {% endif %}
+                {% if store_search or period != "current_month" %}
+                <a href="{{ url_for('index', view='receipts') }}" class="receipt-clear-link">Сбросить фильтры</a>
+                {% endif %}
+            </div>
+        </div>
+    </section>
+
+    <section class="receipt-register" aria-label="Реестр чеков">
+    {% if receipts %}
+        <div class="receipt-register-head">
+            <div class="receipt-sort-controls" aria-label="Колонки и сортировка реестра">
+                <button type="button" class="sort-button receipt-column-store" data-sort="id">
+                    Чек <span class="sort-icon">↕</span>
+                </button>
+                <button type="button" class="sort-button receipt-column-date" data-sort="date">
+                    Дата <span class="sort-icon">↕</span>
+                </button>
+                <span class="receipt-column-items">Позиции</span>
+                <span class="receipt-column-status">Статус</span>
+                <button type="button" class="sort-button receipt-column-total" data-sort="total">
+                    Сумма <span class="sort-icon">↕</span>
+                </button>
+                <span class="receipt-column-disclosure">Состав</span>
+            </div>
+        </div>
+        <div id="receiptTable" class="receipt-document-list">
+            {% for receipt in receipts %}
+            <article
+                class="receipt-document"
+                data-id="{{ receipt.id }}"
+                data-date="{{ receipt.date or '' }}"
+                data-total="{{ receipt.total }}"
+                data-store="{{ receipt.store or '' }}"
+            >
+                <button
+                    type="button"
+                    id="receipt-toggle-{{ receipt.id }}"
+                    class="receipt-document-toggle"
+                    aria-expanded="false"
+                    aria-controls="receipt-detail-{{ receipt.id }}"
+                >
+                    <span class="receipt-main">
+                        <strong>{{ receipt.store or 'Магазин не указан' }}</strong>
+                        <small class="file-cell" title="{{ receipt.receipt_number or '' }}">
+                            Чек #{{ receipt.id }}{% if receipt.receipt_number %} · {{ receipt.receipt_number }}{% endif %}
+                        </small>
+                    </span>
+                    <time datetime="{{ receipt.date or '' }}">{{ receipt.date or 'Дата не указана' }}</time>
+                    <span class="receipt-items">{{ receipt.item_count }} поз.</span>
+                    <span class="receipt-statuses">
+                        {% if receipt.price_warning_count %}
+                            <span class="receipt-badge warning">{{ receipt.price_warning_count }} к проверке</span>
+                        {% else %}
+                            <span class="receipt-badge positive">Проверено</span>
+                        {% endif %}
+                    </span>
+                    <strong class="amount-cell receipt-total">{{ "%.2f"|format(receipt.total) }} €</strong>
+                    <span class="receipt-expand-mark" aria-hidden="true">
+                        <i class="bi bi-chevron-down"></i>
+                    </span>
+                </button>
+                <noscript>
+                    <a href="{{ url_for('view_receipt', receipt_id=receipt.id, return_to=receipt_return_path) }}" class="receipt-no-js-link">Открыть чек #{{ receipt.id }}</a>
+                </noscript>
+                <div
+                    id="receipt-detail-{{ receipt.id }}"
+                    class="receipt-inline-detail"
+                    role="region"
+                    aria-labelledby="receipt-toggle-{{ receipt.id }}"
+                    hidden
+                >
+                    <section class="receipt-items-preview" aria-labelledby="receipt-items-title-{{ receipt.id }}">
+                        <div class="receipt-detail-heading">
+                            <div>
+                                <span>Состав чека</span>
+                                <h3 id="receipt-items-title-{{ receipt.id }}">{{ receipt.store or 'Магазин не указан' }} · {{ receipt.date or 'дата не указана' }}</h3>
+                            </div>
+                            <strong>{{ "%.2f"|format(receipt.total) }} €</strong>
+                        </div>
+                        {% if receipt.preview_items %}
+                        <div class="receipt-item-head" aria-hidden="true">
+                            <span>Товар</span>
+                            <span>Количество</span>
+                            <span>Цена</span>
+                            <span>Категория</span>
+                            <span>Статус</span>
+                        </div>
+                        <div class="receipt-item-list">
+                            {% for item in receipt.preview_items %}
+                            <div class="receipt-item-row">
+                                <strong data-label="Товар">{{ item.name }}</strong>
+                                <span data-label="Количество">{{ item.quantity }}</span>
+                                <span data-label="Цена">{{ "%.2f"|format(item.price) }} €</span>
+                                <span data-label="Категория">{{ item.category }}</span>
+                                {% if item.has_price_warning %}
+                                    <span class="receipt-badge warning" data-label="Статус">К проверке</span>
+                                {% else %}
+                                    <span class="receipt-badge positive" data-label="Статус">Проверено</span>
+                                {% endif %}
+                            </div>
+                            {% endfor %}
+                        </div>
+                        {% else %}
+                        <div class="receipt-item-empty">В чеке не найдены товарные позиции.</div>
+                        {% endif %}
+                    </section>
+
+                    <section class="receipt-evidence-summary" aria-labelledby="receipt-review-title-{{ receipt.id }}">
+                        <div class="receipt-review-copy">
+                            <span>Проверка данных</span>
+                            <h3 id="receipt-review-title-{{ receipt.id }}">
+                                {% if receipt.price_warning_count %}
+                                    {{ receipt.price_warning_count }} поз. требуют внимания
+                                {% else %}
+                                    Доступные позиции проверены
+                                {% endif %}
+                            </h3>
+                            <p>
+                                {% if receipt.price_warning_count %}
+                                    Сигнал основан на доступной проверке цены и распознавания.
+                                {% else %}
+                                    Доступная проверка цены и распознавания не обнаружила проблем.
+                                {% endif %}
+                                {% if receipt.item_count > receipt.preview_items|length %}
+                                    Показано {{ receipt.preview_items|length }} из {{ receipt.item_count }} позиций.
+                                {% endif %}
+                            </p>
+                        </div>
+                        <div class="receipt-actions">
+                            <a href="{{ url_for('view_receipt', receipt_id=receipt.id, return_to=receipt_return_path) }}" class="btn btn-outline-primary btn-sm">
+                                <i class="bi bi-eye" aria-hidden="true"></i>
+                                Открыть чек
+                            </a>
+                            <button
+                                type="button"
+                                class="btn btn-outline-secondary btn-sm receipt-drawer-button"
+                                data-open-receipt-drawer
+                                data-receipt-id="{{ receipt.id }}"
+                                data-receipt-store="{{ receipt.store or 'Магазин не указан' }}"
+                                data-receipt-number="{{ receipt.receipt_number or 'не указан' }}"
+                                data-receipt-item-count="{{ receipt.item_count }}"
+                                data-receipt-review-count="{{ receipt.price_warning_count }}"
+                            >
+                                Источники и ограничения
+                            </button>
+                        </div>
+                    </section>
+                </div>
+            </article>
+            {% endfor %}
+        </div>
+    {% elif store_search %}
+        <div class="receipt-empty-state receipt-no-results">
+            <h2>Чеки не найдены</h2>
+            <p>Поиск по магазину «{{ store_search }}» не дал результатов в выбранном периоде.</p>
+            <a href="{{ url_for('index', view='receipts') }}" class="btn btn-outline-secondary">Сбросить фильтры</a>
+        </div>
+    {% else %}
+        <div class="receipt-empty-state">
+            <h2>В выбранном периоде чеков нет</h2>
+            <p>После импорта чеки появятся здесь в хронологическом реестре.</p>
+            <a href="{{ url_for('upload') }}" class="btn btn-primary">Импортировать чек</a>
+        </div>
+    {% endif %}
+    </section>
+</section>
+
+{% set evidence_receipt_id = none %}
+{% set evidence_store = none %}
+{% set evidence_receipt_number = none %}
+{% set evidence_item_count = 0 %}
+{% set evidence_review_count = 0 %}
+{% include "_receipt_evidence_drawer.html" %}

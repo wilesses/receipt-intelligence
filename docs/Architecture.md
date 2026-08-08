@@ -19,6 +19,7 @@ Receipt Tracker v2 собирает PDF-чеки, извлекает из них
 - pdfplumber для чтения текстового слоя PDF: `app/importer.py`.
 - Poppler `pdftoppm` и Tesseract для OCR, если PDF выглядит как скан: `app/importer.py`.
 - RapidFuzz для безопасных предложений похожих товаров: `app/product_matcher.py`.
+- Собственная Price & Quantity Model v2 для расчета `line_total`, `unit_price`, размера упаковки и нормализованной цены: `app/price_model.py`.
 - python-dotenv для загрузки `.env` в Gmail-импорте: `app/gmail_fetcher.py`.
 - imaplib/email из стандартной библиотеки для Gmail IMAP.
 - Bootstrap, Bootstrap Icons, Chart.js и chartjs-plugin-datalabels через CDN в шаблонах.
@@ -37,7 +38,12 @@ reciept_tracker_v2/
     receipt_parser.py
     product_normalizer.py
     product_matcher.py
+    price_model.py
     backfill_normalized_names.py
+    backfill_price_data.py
+    category_rules.py
+    audit_categories.py
+    backfill_category_sources.py
     category_keywords.py
     analytics_service.py
     analytics.py
@@ -109,6 +115,8 @@ reciept_tracker_v2/
 - `/autocomplete/item_names` - автодополнение товаров;
 - `/products/merge` - объединение названий товаров через `canonical_name`;
 - `/products/suggestions` - предложения похожих товаров без автоматического объединения;
+- `/products/review` - проверка категорий товарных групп;
+- `/data-quality/prices` - read-only экран качества данных Price Model;
 - `/item/<name>` - профиль товара;
 - `/receipt/<int:receipt_id>` - страница чека;
 - `/item/<int:item_id>/category` - ручное обновление категории позиции.
@@ -133,6 +141,7 @@ reciept_tracker_v2/
 - `app/web/routes.py:products_merge()`;
 - `app/web/routes.py:products_merge_submit()`.
 - `app/product_matcher.py:find_similar_products()`.
+- `app/category_rules.py` - ручные category rules и product_key.
 
 ## Жизненный цикл данных
 
@@ -232,6 +241,30 @@ Maxima:
 
 Если совпадений нет, категория становится `прочее`.
 
+Category Engine v2 добавляет единый список `CANONICAL_CATEGORIES`, alias mapping старых названий, `category_source`, таблицу `product_category_rules`, ручную категорию всей точной группы товара, наследование manual rule при новом импорте и экран `/products/review`.
+
+### Price & Quantity Model
+
+Price Model находится в `app/price_model.py`.
+
+Архитектура evidence-first: parser evidence имеет приоритет над выводом из названия; `weighted_inference` принимается только при математической согласованности исходных значений. Confidence levels: parser `0.95`, `package_name` `0.85`, `weighted_inference` `0.75`, `inferred_piece` `0.70`. Service/non-product lines, multipack, malformed и parser-contaminated строки остаются без автоматически рассчитанной normalized price.
+
+Функции:
+
+- `derive_price_data()` - единая функция вывода ценовых полей;
+- `extract_package_size()` - извлекает размер упаковки из названия;
+- `calculate_normalized_unit_price()` - считает EUR/L, EUR/kg или EUR/piece;
+- `validate_price_data()` - собирает warnings; confidence назначается по источнику evidence;
+- `are_price_units_comparable()` - проверяет, можно ли сравнивать две цены.
+
+При импорте `app/importer.py:prepare_receipt_data()` добавляет ценовые поля к item, а `app/db.py:add_receipt_with_items()` повторно считает их в общей точке вставки. Это сохраняет одну точку истины для Gmail, upload и batch import.
+
+`items.price` остается итоговой ценой строки. Новые поля `line_total`, `unit_price`, `quantity_unit`, `package_size`, `package_unit`, `normalized_unit_price`, `normalized_price_unit`, `price_parse_source`, `price_parse_confidence` добавляются без перестройки таблицы.
+
+`app/backfill_price_data.py` является dry-run по умолчанию. Selective write разрешает только явный source allowlist (`package_name`, `weighted_inference`), применяет field-level downgrade protection и исключает high-confidence conflicts. Перед write `app.db:backup_database()` создает backup через SQLite Backup API и требует `PRAGMA integrity_check = ok`.
+
+Selective backfill основной базы завершен: 2184 строки, только 2179 `package_name` и 5 `weighted_inference`. `inferred_piece`, `service_line`, rejected/unresolved и manual-review IDs 3544, 3578, 3579, 3581 не применялись. Повторный selective dry-run показывает 0 изменений; 1094 normalized prices остаются unresolved. Полный backfill не выполнялся и запрещен без отдельного решения.
+
 ### Нормализация товара
 
 Product Normalizer находится в `app/product_normalizer.py`.
@@ -269,6 +302,10 @@ python -m app.backfill_normalized_names
 
 Вставка новых `items` также сохраняет `normalized_name = normalize_product_name(name)`. `canonical_name` при импорте остается `NULL`.
 
+Вставка новых `items` также сохраняет Price Model поля через `derive_price_data()`. У Rimi parser теперь может прийти `quantity_unit` (`gab`/`kg`) и `unit_price`; у Maxima `quantity_unit` пока остается `unknown`.
+
+При вставке новых `items` `app/db.py:add_receipt_with_items()` также вычисляет `product_key`, ищет правило в `product_category_rules`, ставит `category_source = inherited`, если правило найдено, иначе сохраняет `rule` или `fallback`.
+
 ### Analytics
 
 Основная аналитика:
@@ -288,13 +325,15 @@ python -m app.backfill_normalized_names
 
 - `app/web/routes.py:item_profile()`;
 - SQL получает историю покупок, агрегаты, магазины, алиасы;
-- Python вызывает `build_price_evaluation()`.
+- Python вызывает `build_price_evaluation()`;
+- если есть нормализованные цены, сравнение идет по EUR/L, EUR/kg или EUR/piece, иначе используется legacy `price / quantity`.
 
 Страница чека:
 
 - `app/web/routes.py:view_receipt()`;
 - SQL получает позиции чека;
-- Python считает `total_sum` и вызывает `build_receipt_price_analysis()`.
+- Python считает `total_sum` и вызывает `build_receipt_price_analysis()`;
+- анализ цены позиции сначала использует `normalized_unit_price`, а при отсутствии данных возвращается к legacy `price / quantity`.
 
 ### Web UI
 
@@ -307,6 +346,8 @@ python -m app.backfill_normalized_names
 - `receipt.html` показывает позиции чека и статус цены;
 - `products_merge.html` обновляет `canonical_name`.
 - `product_suggestions.html` показывает пары похожих товаров и ведет в существующее объединение.
+- `product_review.html` показывает проблемные товарные группы и форму применения canonical category ко всей группе.
+- `price_data_quality.html` показывает read-only диагностику Price Model.
 
 ### Product Suggestions
 

@@ -1,0 +1,49 @@
+<div class="receipt-drawer-scrim" data-close-receipt-drawer hidden></div>
+<aside
+    class="receipt-drawer"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="receipt-drawer-title"
+    aria-describedby="receipt-drawer-description"
+    hidden
+>
+    <header class="receipt-drawer-head">
+        <div>
+            <span class="receipt-drawer-label">Документальные данные</span>
+            <h2 id="receipt-drawer-title">Источники и ограничения</h2>
+            <p id="receipt-drawer-description">
+                <span data-receipt-drawer-identity>{{ evidence_store or "Выбранный чек" }}{% if evidence_receipt_id %}, чек #{{ evidence_receipt_id }}{% endif %}</span>.
+                Показаны только сведения, доступные в текущей модели.
+            </p>
+        </div>
+        <button type="button" class="receipt-drawer-close" data-close-receipt-drawer aria-label="Закрыть источники и ограничения">
+            <span>Закрыть</span>
+            <i class="bi bi-x-lg" aria-hidden="true"></i>
+        </button>
+    </header>
+    <div class="receipt-drawer-body">
+        <section>
+            <h3>Источник</h3>
+            <p>Номер, дата, магазин, сумма и позиции взяты из сохранённого чека.</p>
+        </section>
+        <section>
+            <h3>Подтверждено</h3>
+            <p>
+                В документе <span data-receipt-drawer-item-count>{{ evidence_item_count or 0 }}</span> поз.
+                <span data-receipt-drawer-review-count>{{ evidence_review_count or 0 }}</span> из них отмечены текущими проверочными правилами.
+            </p>
+        </section>
+        <section>
+            <h3>Ограничения</h3>
+            <p>Статус опирается на доступную уверенность распознавания и корректность нормализованной цены. Он не подтверждает смысл покупки и не заменяет проверку исходного чека.</p>
+        </section>
+        <section class="receipt-drawer-trace">
+            <h3>Трассировка</h3>
+            <dl>
+                <div><dt>Чек</dt><dd data-receipt-drawer-id>{% if evidence_receipt_id %}#{{ evidence_receipt_id }}{% else %}—{% endif %}</dd></div>
+                <div><dt>Магазин</dt><dd data-receipt-drawer-store>{{ evidence_store or "Не указан" }}</dd></div>
+                <div><dt>Номер</dt><dd data-receipt-drawer-number>{{ evidence_receipt_number or "Не указан" }}</dd></div>
+            </dl>
+        </section>
+    </div>
+</aside>

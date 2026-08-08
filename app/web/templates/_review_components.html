@@ -1,0 +1,123 @@
+{% macro review_status(label, tone="attention") -%}
+<span class="review-status review-status-{{ tone }}">{{ label }}</span>
+{%- endmacro %}
+
+{% macro review_reason(problem) -%}
+<li class="review-reason" data-reason-code="{{ problem }}">
+    <span class="review-reason-mark" aria-hidden="true"></span>
+    <span>
+        {% if problem == "Прочее" %}Текущая категория — «прочее»
+        {% elif problem == "Fallback" %}Категория назначена резервным правилом
+        {% elif problem == "Конфликт категорий" %}В группе встречаются разные категории
+        {% elif problem == "Manual + rule" %}Ручное и автоматическое правила дали разные источники
+        {% elif problem == "Нет normalized_name" %}У части позиций нет нормализованного имени
+        {% elif problem == "Нет ручного правила" %}Для группы ещё нет ручного правила
+        {% elif problem == "Пустая категория" %}У части позиций категория не заполнена
+        {% else %}{{ problem }}
+        {% endif %}
+    </span>
+</li>
+{%- endmacro %}
+
+{% macro review_summary(total_count, visible_count, filter_label, primary_label="Ожидают проверки", primary_unit="товарных групп", visible_label="Показано сейчас", filter_title="Текущий фокус", class_name="review-summary-band", title_id="review-summary-title", count_id="") -%}
+<section class="{{ class_name }}" aria-labelledby="{{ title_id }}">
+    <h2 id="{{ title_id }}" class="visually-hidden">Сводка очереди</h2>
+    <dl>
+        <div class="review-summary-primary">
+            <dt>{{ primary_label }}</dt>
+            <dd><span{% if count_id %} id="{{ count_id }}"{% endif %}>{{ total_count }}</span> {{ primary_unit }}</dd>
+        </div>
+        <div>
+            <dt>{{ visible_label }}</dt>
+            <dd>{{ visible_count }}</dd>
+        </div>
+        <div>
+            <dt>{{ filter_title }}</dt>
+            <dd>{{ filter_label }}</dd>
+        </div>
+    </dl>
+</section>
+{%- endmacro %}
+
+{% macro review_actions(group, category_options, query, problem_filter, sort, limit, page) -%}
+<div class="review-decision" aria-label="Решение для {{ group.display_name }}">
+    <form method="post" action="{{ url_for('product_review_update_category') }}" class="review-category-form">
+        <input type="hidden" name="product_key" value="{{ group.product_key }}">
+        <input type="hidden" name="q" value="{{ query }}">
+        <input type="hidden" name="filter" value="{{ problem_filter }}">
+        <input type="hidden" name="sort" value="{{ sort }}">
+        <input type="hidden" name="limit" value="{{ limit }}">
+        <input type="hidden" name="page" value="{{ page }}">
+        <label>
+            <span>Категория для подтверждения</span>
+            <select class="form-select" name="category">
+                {% for category in category_options %}
+                    <option value="{{ category }}" {% if category == group.category %}selected{% endif %}>{{ category }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <button class="btn btn-primary" type="submit">
+            <i class="bi bi-check2" aria-hidden="true"></i>
+            Подтвердить
+        </button>
+    </form>
+
+    <nav class="review-row-actions" aria-label="Связанные действия">
+        <a href="{{ url_for('item_profile', name=group.display_name) }}">Открыть товар</a>
+        {% if group.receipt_ids %}
+            {% set receipt_id = group.receipt_ids|sort|first %}
+            <a href="{{ url_for('view_receipt', receipt_id=receipt_id) }}">Открыть чек</a>
+        {% endif %}
+    </nav>
+</div>
+{%- endmacro %}
+
+{% macro review_card(group, category_options, query, problem_filter, sort, limit, page) -%}
+<article class="review-item" data-review-item>
+    <header class="review-item-header">
+        <div class="review-item-identity">
+            {{ review_status("Требует решения") }}
+            <h2>{{ group.display_name }}</h2>
+            <p>{{ group.item_count }} поз. в {{ group.receipt_count }} чеках{% if group.last_date %} · последняя покупка {{ group.last_date }}{% endif %}</p>
+        </div>
+        <dl class="review-category-state">
+            <div>
+                <dt>Текущая категория</dt>
+                <dd>{{ group.categories|join(", ") }}</dd>
+            </div>
+            <div>
+                <dt>Уверенность</dt>
+                <dd class="review-unavailable">Уверенность не рассчитывается</dd>
+            </div>
+        </dl>
+    </header>
+
+    <div class="review-item-body">
+        <section class="review-evidence" aria-labelledby="review-reasons-{{ loop.index if loop is defined else group.product_key|replace(' ', '-') }}">
+            <div class="review-section-heading">
+                <h3 id="review-reasons-{{ loop.index if loop is defined else group.product_key|replace(' ', '-') }}">Почему требуется проверка</h3>
+                <span>Оснований: {{ group.problems|length }}</span>
+            </div>
+            <ul class="review-reasons" aria-label="Причины проверки">
+                {% for problem in group.problems %}
+                    {{ review_reason(problem) }}
+                {% endfor %}
+            </ul>
+        </section>
+
+        {{ review_actions(group, category_options, query, problem_filter, sort, limit, page) }}
+    </div>
+
+    <details class="review-details">
+        <summary>Детали группы</summary>
+        <dl>
+            <div><dt>Источники</dt><dd>{{ group.source_labels|join(", ") }}</dd></div>
+            <div><dt>Магазины</dt><dd>{{ group.stores|join(", ") or "—" }}</dd></div>
+            <div><dt>Нормализованное имя</dt><dd>{{ group.normalized_name or "—" }}</dd></div>
+            <div><dt>Ключ товара</dt><dd>{{ group.product_key }}</dd></div>
+            <div><dt>Алиасы</dt><dd>{{ group.aliases|join(" | ") or "—" }}</dd></div>
+            <div><dt>Ручное правило</dt><dd>{{ "есть" if group.has_rule else "нет" }}</dd></div>
+        </dl>
+    </details>
+</article>
+{%- endmacro %}

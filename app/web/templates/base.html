@@ -1,51 +1,157 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="ru" data-theme="dark" data-theme-choice="system" data-bs-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#161616" data-theme-color>
+    <script>
+    (() => {
+        const key = 'receipt-intelligence:theme:v1';
+        const allowed = new Set(['system', 'light', 'dark']);
+        let choice = 'system';
+
+        try {
+            const saved = localStorage.getItem(key);
+            if (allowed.has(saved)) choice = saved;
+            else if (saved !== null) localStorage.removeItem(key);
+        } catch (_) {}
+
+        const resolved = choice === 'system'
+            ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+            : choice;
+        const root = document.documentElement;
+        root.dataset.theme = resolved;
+        root.dataset.themeChoice = choice;
+        root.dataset.bsTheme = resolved;
+        root.style.colorScheme = resolved;
+        document.querySelector('[data-theme-color]')?.setAttribute('content', resolved === 'dark' ? '#161616' : '#f7f8f6');
+    })();
+    </script>
     <title>{% block title %}Трекер чеков{% endblock %}</title>
     <link rel="preconnect" href="https://cdn.jsdelivr.net">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    {% block extra_head %}{% endblock %}
 </head>
-<body>
+<body class="{% block body_class %}{% endblock %}">
+{% set current_endpoint = request.endpoint or '' %}
+{% set overview_endpoints = ['index', 'view_receipt'] %}
+{% set intelligence_endpoints = ['analytics', 'item_profile'] %}
+{% set operations_endpoints = ['upload', 'products_merge', 'product_suggestions', 'product_review', 'price_data_quality'] %}
 <a class="skip-link" href="#main-content">К содержимому</a>
-<nav class="app-shell navbar navbar-expand-lg">
-    <div class="container-fluid app-container">
-        <a class="navbar-brand" href="{{ url_for('index') }}">
-            <span class="brand-mark"><i class="bi bi-receipt" aria-hidden="true"></i></span>
-            <span>Трекер чеков</span>
-        </a>
-        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-label="Открыть меню">
-            <span class="navbar-toggler-icon"></span>
-        </button>
-        <div class="collapse navbar-collapse" id="navbarNav">
-            <ul class="navbar-nav ms-auto">
-                <li class="nav-item">
-                    <a class="nav-link" href="{{ url_for('index') }}"><i class="bi bi-list-ul" aria-hidden="true"></i> Чеки</a>
-                </li>
-                <li class="nav-item">
-                    <a class="nav-link" href="{{ url_for('upload') }}"><i class="bi bi-cloud-arrow-up" aria-hidden="true"></i> Загрузка</a>
-                </li>
-                <li class="nav-item">
-                    <a class="nav-link" href="{{ url_for('analytics') }}"><i class="bi bi-bar-chart" aria-hidden="true"></i> Аналитика</a>
-                </li>
-                <li class="nav-item">
-                    <a class="nav-link" href="{{ url_for('products_merge') }}"><i class="bi bi-diagram-3" aria-hidden="true"></i> Объединение</a>
-                </li>
-                <li class="nav-item">
-                    <a class="nav-link" href="{{ url_for('product_suggestions') }}"><i class="bi bi-search-heart" aria-hidden="true"></i> Похожие товары</a>
-                </li>
-            </ul>
+<nav class="app-shell navbar navbar-expand-lg" aria-label="Основная навигация">
+    <div class="app-nav-frame">
+        <div class="app-brand-row">
+            <a class="navbar-brand" href="{{ url_for('index') }}">
+                <span class="brand-mark"><i class="bi bi-receipt" aria-hidden="true"></i></span>
+                <span class="brand-copy">
+                    <strong>Трекер чеков</strong>
+                    <small>Intelligence Console</small>
+                </span>
+            </a>
+            <button
+                class="navbar-toggler"
+                type="button"
+                data-bs-toggle="collapse"
+                data-bs-target="#navbarNav"
+                aria-controls="navbarNav"
+                aria-expanded="false"
+                aria-label="Открыть меню"
+            >
+                <span class="navbar-toggler-icon"></span>
+            </button>
+        </div>
+
+        <div class="collapse navbar-collapse app-nav-collapse" id="navbarNav">
+            <div class="nav-groups">
+                <section class="nav-group{% if current_endpoint in overview_endpoints %} is-active{% endif %}" aria-labelledby="nav-overview">
+                    <h2 id="nav-overview" class="nav-group-label">Обзор</h2>
+                    <ul class="navbar-nav">
+                        <li class="nav-item">
+                            <a class="nav-link{% if current_endpoint in overview_endpoints %} active{% endif %}" href="{{ url_for('index') }}"{% if current_endpoint in overview_endpoints %} aria-current="page"{% endif %}>
+                                <i class="bi bi-receipt-cutoff" aria-hidden="true"></i>
+                                <span>Чеки</span>
+                            </a>
+                        </li>
+                    </ul>
+                </section>
+
+                <section class="nav-group{% if current_endpoint in intelligence_endpoints %} is-active{% endif %}" aria-labelledby="nav-intelligence">
+                    <h2 id="nav-intelligence" class="nav-group-label">Интеллект</h2>
+                    <ul class="navbar-nav">
+                        <li class="nav-item">
+                            <a class="nav-link{% if current_endpoint in intelligence_endpoints %} active{% endif %}" href="{{ url_for('analytics') }}"{% if current_endpoint in intelligence_endpoints %} aria-current="page"{% endif %}>
+                                <i class="bi bi-bar-chart-line" aria-hidden="true"></i>
+                                <span>Аналитика</span>
+                            </a>
+                        </li>
+                    </ul>
+                </section>
+
+                <section class="nav-group{% if current_endpoint in operations_endpoints %} is-active{% endif %}" aria-labelledby="nav-operations">
+                    <h2 id="nav-operations" class="nav-group-label">Операции</h2>
+                    <ul class="navbar-nav">
+                        <li class="nav-item">
+                            <a class="nav-link{% if current_endpoint == 'upload' %} active{% endif %}" href="{{ url_for('upload') }}"{% if current_endpoint == 'upload' %} aria-current="page"{% endif %}>
+                                <i class="bi bi-cloud-arrow-up" aria-hidden="true"></i>
+                                <span>Загрузка</span>
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link{% if current_endpoint == 'product_review' %} active{% endif %}" href="{{ url_for('product_review') }}"{% if current_endpoint == 'product_review' %} aria-current="page"{% endif %}>
+                                <i class="bi bi-clipboard-check" aria-hidden="true"></i>
+                                <span>Проверка категорий</span>
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link{% if current_endpoint == 'product_suggestions' %} active{% endif %}" href="{{ url_for('product_suggestions') }}"{% if current_endpoint == 'product_suggestions' %} aria-current="page"{% endif %}>
+                                <i class="bi bi-search" aria-hidden="true"></i>
+                                <span>Похожие товары</span>
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link{% if current_endpoint == 'products_merge' %} active{% endif %}" href="{{ url_for('products_merge') }}"{% if current_endpoint == 'products_merge' %} aria-current="page"{% endif %}>
+                                <i class="bi bi-diagram-3" aria-hidden="true"></i>
+                                <span>Объединение</span>
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link{% if current_endpoint == 'price_data_quality' %} active{% endif %}" href="{{ url_for('price_data_quality') }}"{% if current_endpoint == 'price_data_quality' %} aria-current="page"{% endif %}>
+                                <i class="bi bi-speedometer2" aria-hidden="true"></i>
+                                <span>Качество цен</span>
+                            </a>
+                        </li>
+                    </ul>
+                </section>
+            </div>
+            <div class="app-theme-control">
+                <label for="theme-choice">Тема</label>
+                <select id="theme-choice" data-theme-control aria-describedby="theme-choice-help">
+                    <option value="system">Системная</option>
+                    <option value="light">Светлая</option>
+                    <option value="dark">Тёмная</option>
+                </select>
+                <span class="visually-hidden" id="theme-choice-help">Выберите системную, светлую или тёмную тему оформления.</span>
+            </div>
         </div>
     </div>
 </nav>
 
-<main class="app-container page-content" id="main-content">
-    {% block content %}{% endblock %}
+<main class="page-content" id="main-content" tabindex="-1">
+    <div class="app-container">
+        {% with messages = get_flashed_messages() %}
+            {% if messages %}
+                {% for message in messages %}
+                    <div class="state-message state-neutral inline-status" role="status">{{ message }}</div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+        {% block content %}{% endblock %}
+    </div>
 </main>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+<script src="{{ url_for('static', filename='theme.js') }}" defer></script>
 </body>
 </html>

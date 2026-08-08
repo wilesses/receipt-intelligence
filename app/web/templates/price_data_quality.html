@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% from "_diagnostic_components.html" import coverage_band, problem_selector, diagnostic_explanation, diagnostic_row %}
+{% block title %}Качество цен{% endblock %}
+{% block body_class %}review-page price-quality-page{% endblock %}
+{% block content %}
+{% set issue_labels = {
+    "all": "Все проблемы",
+    "unknown": "Неизвестная единица",
+    "low_confidence": "Низкая уверенность",
+    "missing_package": "Нет размера упаковки",
+    "suspicious": "Подозрительная цена"
+} %}
+
+<article class="price-quality-workspace" aria-labelledby="price-quality-title">
+    <header class="page-header review-page-header price-quality-header">
+        <div>
+            <h1 id="price-quality-title">Качество цен</h1>
+            <p>Найдите строки, где нормализованная цена требует проверки, и проследите диагноз до исходного чека.</p>
+        </div>
+        <p class="review-queue-count"><strong>{{ summary[0] or 0 }}</strong> строк в наборе</p>
+    </header>
+
+    {{ coverage_band(summary) }}
+    {{ problem_selector(issue_filter, limit) }}
+
+    <section class="diagnostic-results" aria-labelledby="diagnostic-results-title">
+        <header class="review-queue-heading diagnostic-results-heading">
+            <div>
+                <h2 id="diagnostic-results-title">Диагностические строки</h2>
+                <p>Текущий фокус: {{ issue_labels.get(issue_filter, "Все проблемы") }}</p>
+            </div>
+            <span>{{ rows|length }} показано · лимит {{ limit }}</span>
+        </header>
+
+        {{ diagnostic_explanation(issue_filter) }}
+
+        {% if rows %}
+        <div class="diagnostic-register-wrap">
+            <table class="diagnostic-register">
+                <caption class="visually-hidden">Строки товаров, требующие проверки качества цены</caption>
+            <thead>
+                <tr>
+                    <th scope="col">Товар</th>
+                    <th scope="col">Проблема</th>
+                    <th scope="col">Исходная цена</th>
+                    <th scope="col">Нормализованная</th>
+                    <th scope="col">Количество</th>
+                    <th scope="col">Уверенность</th>
+                    <th scope="col">Технические данные</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in rows %}
+                    {{ diagnostic_row(row, issue_filter) }}
+                {% endfor %}
+            </tbody>
+            </table>
+        </div>
+        {% else %}
+            <section class="review-empty-state diagnostic-empty-state" aria-labelledby="diagnostic-empty-title">
+                {% if not summary[0] %}
+                    <span class="review-status review-status-attention">Недостаточно данных</span>
+                    <h2 id="diagnostic-empty-title">Пока нечего проверять</h2>
+                    <p>Строки товаров появятся здесь после импорта чеков с ценовыми данными.</p>
+                {% elif issue_filter == "all" %}
+                    <span class="review-status review-status-complete">Проверка завершена</span>
+                    <h2 id="diagnostic-empty-title">Проблем с качеством цен не найдено</h2>
+                    <p>В текущем наборе нет строк, соответствующих существующим диагностическим условиям.</p>
+                {% else %}
+                    <span class="review-status review-status-complete">Нет результатов</span>
+                    <h2 id="diagnostic-empty-title">В этом типе проблем строк не найдено</h2>
+                    <p>Вернитесь ко всем проблемам или выберите другой диагностический срез.</p>
+                    <a class="btn btn-outline-secondary" href="{{ url_for('price_data_quality', limit=limit) }}">Показать все проблемы</a>
+                {% endif %}
+            </section>
+        {% endif %}
+    </section>
+</article>
+{% endblock %}

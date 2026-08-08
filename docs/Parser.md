@@ -193,6 +193,38 @@ Maxima fallback цена:
 (\d+,\d{2})\s+[A-Z]?$
 ```
 
+## Parser Quality v2
+
+Общий preprocessing выполняется в `parse_receipt()` до определения магазина и обоих parser branches. `preprocess_receipt_text()` делает только доказуемые преобразования:
+
+- нормализует длинные тире;
+- удаляет пробел после десятичной запятой, только если после нее ровно одна цифра и известная единица: `1, 5L` -> `1,5L`, `0, 5L` -> `0,5L`;
+- не заменяет символы и не угадывает значения: `21`, `lkg`, `m1`, `2, 86L` остаются исходным текстом.
+
+`sanitize_receipt_lines()` узко исключает store headers, строки `Čeks`/`Ceks`, отдельные номера вида `123/456`, кассу, кассира и terminal metadata. Store detection выполняется до удаления header, поэтому Rimi dispatch сохраняется.
+
+Перед добавлением item `parser_quality_issue()` отклоняет:
+
+- пустое имя;
+- receipt-header contamination;
+- подтвержденные service/non-product lines;
+- OCR-токены `lkg` и `m1`;
+- split decimal с двумя и более цифрами после пробела, например `2, 86L`;
+- package token, слепленный с предыдущим словом, например `sviestu250g`.
+
+Multipack (`6x330ml`, `1+1`) не исправляется и не отклоняется как товар: исходное имя сохраняется, а package semantics остаются unresolved. Это отличается от доказанного non-product/OCR contamination.
+
+Read-only аудит:
+
+```text
+python -m app.audit_parser_quality
+python -m app.audit_parser_quality --examples 20
+```
+
+`app/audit_parser_quality.py` открывает SQLite через URI `mode=ro` и `PRAGMA query_only = ON`. На текущих 3580 items он нашел: decimal corruption 12, `lkg` 12, `m1` 11, `Čeks` 6, service lines 656, multipack 86, glued tokens 5, ambiguous package size 52. Узких cashier-name совпадений нет; 2740 строк попали в `unknown`, куда входят нормальные товары.
+
+Проекция нового parser для сохраненных имен: 8 безопасных исправлений, 694 отклонения, 138 намеренно unresolved, 2740 без изменения. Группы exclusive по приоритету audit script. Это read-only модель будущего импорта; исходный OCR-текст старых чеков в БД не хранится, поэтому исторический parse нельзя воспроизвести полностью.
+
 Категоризация чистит название:
 
 ```regex
@@ -249,10 +281,13 @@ Pipeline:
 3. `parse_receipt(text)`.
 4. Проверка, что есть товары.
 5. Повторная категоризация каждого товара через `categorize_from_name()`.
-6. Заполнение пустых `price` и `quantity`.
-7. Подсчет `total`, если итог не найден.
-8. `receipt_number = Path(file_path).stem`.
-9. `add_receipt_with_items(...)`.
+6. Расчет Price Model полей через `derive_price_data()`.
+7. Заполнение пустых `price` и `quantity`.
+8. Подсчет `total`, если итог не найден.
+9. `receipt_number = Path(file_path).stem`.
+10. `add_receipt_with_items(...)`.
+
+Price Model не меняет regex парсеров. Rimi parser передает `quantity_unit` (`gab` или `kg`) и `unit_price`, если они найдены. Maxima parser пока передает `quantity_unit = "unknown"`. В обоих случаях `price` остается итоговой суммой товарной строки.
 
 Ручная загрузка:
 
@@ -320,6 +355,10 @@ Pipeline:
 - `receipt_number` берется из имени файла, а не из текста чека.
 - Дубликаты определяются по имени PDF без расширения.
 - Сумма чека может быть заменена суммой товаров, если итог не найден.
+- Multipack вроде `6x330ml` пока не разбирается в общий объем; Price Model только ставит warning.
+- `lkg`, `m1`, unsafe split decimals и glued package tokens не исправляются догадкой; новый parser отклоняет такие item candidates.
+- Audit-категория `unknown` не означает ошибку: она включает обычные товары без узкой contamination signature.
+- У Maxima единица количества пока неизвестна, поэтому нормализованная цена зависит от размера упаковки в названии.
 
 ## Поддерживаемые магазины
 
@@ -410,4 +449,3 @@ Gāzēts dzēriens PEPSI MAX 1L PET D
 ```
 
 Если цена не найдена, `prepare_receipt_data()` заменит пустую цену на `0`.
-

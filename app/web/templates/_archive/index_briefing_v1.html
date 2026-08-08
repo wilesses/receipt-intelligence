@@ -1,0 +1,251 @@
+{% extends "base.html" %}
+{% block title %}{{ "Чеки" if view == "receipts" else "Интеллектуальная сводка" }}{% endblock %}
+{% block content %}
+<header class="command-header">
+    <div class="command-heading">
+        <p class="eyebrow">{{ "Архив чеков" if view == "receipts" else "Receipt Intelligence OS" }}</p>
+        <h1>{{ "Чеки" if view == "receipts" else "Интеллектуальная сводка" }}</h1>
+        <p class="command-subtitle">
+            {% if view == "receipts" %}
+                Полный список за период: {{ dashboard.period.label|lower }}.
+            {% else %}
+                Краткий разбор изменений, доказательств и следующего решения.
+            {% endif %}
+        </p>
+    </div>
+
+    <div class="command-controls">
+        <form method="get" action="{{ url_for('index') }}" class="period-control">
+            {% if view == "receipts" %}<input type="hidden" name="view" value="receipts">{% endif %}
+            {% if view == "receipts" and store_search %}<input type="hidden" name="store_search" value="{{ store_search }}">{% endif %}
+            <label for="periodSelect">Период</label>
+            <select id="periodSelect" name="period" class="form-select" onchange="this.form.submit()">
+                <option value="current_month" {% if period == "current_month" %}selected{% endif %}>Текущий месяц</option>
+                <option value="previous_month" {% if period == "previous_month" %}selected{% endif %}>Прошлый месяц</option>
+                <option value="last_30_days" {% if period == "last_30_days" %}selected{% endif %}>Последние 30 дней</option>
+                <option value="all_time" {% if period == "all_time" %}selected{% endif %}>За всё время</option>
+            </select>
+        </form>
+
+        <form method="get" action="{{ url_for('index') }}" class="command-search">
+            <input type="hidden" name="view" value="receipts">
+            <input type="hidden" name="period" value="{{ period }}">
+            <div class="search-control">
+                <button type="submit" class="command-search-button" aria-label="Найти чеки по магазину">
+                    <i class="bi bi-search" aria-hidden="true"></i>
+                </button>
+                <label class="visually-hidden" for="{{ 'searchInput' if view == 'receipts' else 'commandSearch' }}">Поиск по магазину</label>
+                <input
+                    type="search"
+                    id="{{ 'searchInput' if view == 'receipts' else 'commandSearch' }}"
+                    name="store_search"
+                    class="form-control"
+                    value="{{ store_search }}"
+                    placeholder="Магазин…"
+                    autocomplete="off"
+                >
+            </div>
+        </form>
+
+        <a href="{{ url_for('upload') }}" class="btn btn-primary command-import">
+            <i class="bi bi-cloud-arrow-up" aria-hidden="true"></i>
+            Импортировать
+        </a>
+    </div>
+</header>
+
+{% if view == "receipts" %}
+<div class="view-return">
+    <a href="{{ url_for('index', period=period) }}" class="btn btn-outline-primary btn-sm">
+        <i class="bi bi-arrow-left" aria-hidden="true"></i>
+        Вернуться к обзору
+    </a>
+    <span id="receiptCount" role="status" aria-live="polite">Найдено чеков: {{ receipts|length }}</span>
+</div>
+
+<section class="surface receipt-archive" aria-labelledby="receipt-list-title">
+    <div class="section-title">
+        <div>
+            <p class="eyebrow">{{ dashboard.period.label }}</p>
+            <h2 id="receipt-list-title">Все чеки</h2>
+        </div>
+    </div>
+    {% if receipts %}
+    <div class="table-responsive" tabindex="0">
+        <table id="receiptTable" class="table app-table align-middle">
+            <thead>
+                <tr>
+                    <th scope="col" aria-sort="none"><button type="button" class="sort-button" data-sort="id">ID <span class="sort-icon">↕</span></button></th>
+                    <th scope="col">Номер</th>
+                    <th scope="col" aria-sort="none"><button type="button" class="sort-button" data-sort="date">Дата <span class="sort-icon">↕</span></button></th>
+                    <th scope="col">Магазин</th>
+                    <th scope="col" aria-sort="none" class="text-end"><button type="button" class="sort-button" data-sort="total">Сумма <span class="sort-icon">↕</span></button></th>
+                    <th scope="col" class="text-end">Действие</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for receipt in receipts %}
+                <tr>
+                    <td class="text-muted">#{{ receipt.id }}</td>
+                    <td class="file-cell" title="{{ receipt.receipt_number or '' }}">{{ receipt.receipt_number or '—' }}</td>
+                    <td>{{ receipt.date or '—' }}</td>
+                    <td>{{ receipt.store or '—' }}</td>
+                    <td class="amount-cell">{{ "%.2f"|format(receipt.total) }} €</td>
+                    <td class="text-end">
+                        <a href="{{ url_for('view_receipt', receipt_id=receipt.id) }}" class="btn btn-outline-primary btn-sm">
+                            <i class="bi bi-eye" aria-hidden="true"></i>
+                            Открыть
+                        </a>
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="empty-message">Чеки за выбранный период не найдены.</div>
+    {% endif %}
+</section>
+
+{% else %}
+<article class="briefing" aria-labelledby="briefing-conclusion">
+    <div class="briefing-opening{% if dashboard.briefing.quiet %} quiet{% endif %}">
+        <section class="briefing-lead">
+            <p class="briefing-index">01 / Вывод</p>
+            <h2 id="briefing-conclusion">{{ dashboard.briefing.conclusion }}</h2>
+            <p class="briefing-significance">{{ dashboard.briefing.significance }}</p>
+            <div class="briefing-next">
+                <span>Следующий шаг</span>
+                {% if dashboard.briefing.findings %}
+                <a href="#briefing-findings">Разобрать {{ dashboard.briefing.findings|length }} {{ 'наблюдение' if dashboard.briefing.findings|length == 1 else 'наблюдения' }}</a>
+                {% else %}
+                <a href="{{ url_for('index', view='receipts', period=period) }}">Проверить последние чеки</a>
+                {% endif %}
+            </div>
+        </section>
+
+        <aside class="briefing-context" aria-label="Контекст периода">
+            <p class="briefing-index">Контекст</p>
+            <dl>
+                <div><dt>Выбранный период</dt><dd>{{ dashboard.period.label }}<small>{{ dashboard.briefing.selected_range }}</small></dd></div>
+                <div><dt>Период сравнения</dt><dd>{% if dashboard.briefing.comparison_range %}Предыдущий сопоставимый<small>{{ dashboard.briefing.comparison_range }}</small>{% else %}Недоступен{% endif %}</dd></div>
+                <div><dt>Расходы</dt><dd>{{ "%.2f"|format(dashboard.summary.spend) }} €</dd></div>
+                {% if dashboard.comparison %}
+                <div><dt>Изменение</dt><dd>{{ "%+.2f"|format(dashboard.comparison.absolute_delta) }} €{% if dashboard.comparison.percentage_delta is not none %}<small>{{ "%+.1f"|format(dashboard.comparison.percentage_delta) }}%</small>{% endif %}</dd></div>
+                {% endif %}
+                <div><dt>Чеки</dt><dd>{{ dashboard.summary.receipt_count }}</dd></div>
+                {% if dashboard.forecast %}<div><dt>Прогноз</dt><dd>{{ "%.2f"|format(dashboard.forecast.amount) }} €<small>по текущему дневному темпу</small></dd></div>{% endif %}
+            </dl>
+        </aside>
+    </div>
+
+    <section class="briefing-findings" id="briefing-findings" aria-labelledby="findings-title">
+        <header class="briefing-section-heading">
+            <div><p class="briefing-index">02 / Обоснование</p><h2 id="findings-title">Что заслуживает внимания</h2></div>
+            <span>{{ dashboard.briefing.findings|length }} / 3</span>
+        </header>
+        {% if dashboard.briefing.findings %}
+        <ol class="finding-list">
+            {% for finding in dashboard.briefing.findings %}
+            <li class="finding-item">
+                <span class="finding-number">0{{ loop.index }}</span>
+                <details class="claim-trace">
+                    <summary tabindex="0">
+                        <span class="finding-copy"><strong>{{ finding.title }}</strong><small>{{ finding.significance }}</small></span>
+                        <span class="finding-evidence">{{ finding.evidence_label }}</span>
+                        <span class="trace-toggle"><span>Проследить вывод</span><i class="bi bi-chevron-down" aria-hidden="true"></i></span>
+                    </summary>
+                    <div class="trace-body">
+                        <div><span>Изменение</span><p>{{ finding.comparison }}</p></div>
+                        <div><span>Причина</span><p>{{ finding.reason }}</p></div>
+                        <div><span>Доказательства</span><p>{{ finding.evidence_summary }}</p></div>
+                        <div><span>Решение</span><p>{{ finding.decision }}</p></div>
+                    </div>
+                </details>
+                <a class="finding-action" href="{{ finding.links[0].href }}">{{ finding.links[0].label }}<i class="bi bi-arrow-up-right" aria-hidden="true"></i></a>
+            </li>
+            {% endfor %}
+        </ol>
+        {% else %}
+        <div class="quiet-briefing" role="status">
+            <i class="bi bi-check2-circle" aria-hidden="true"></i>
+            {% if dashboard.summary.receipt_count %}
+            <div><strong>Ничего значимого не изменилось.</strong><p>Расходы стабильны, заметного движения цен и срочных проблем качества нет.</p></div>
+            {% else %}
+            <div><strong>Новых данных пока нет.</strong><p>После следующего импорта система сравнит период и выделит только значимые изменения.</p></div>
+            {% endif %}
+        </div>
+        {% endif %}
+    </section>
+
+    <section class="evidence-ledger" aria-labelledby="evidence-title">
+        <header class="briefing-section-heading">
+            <div><p class="briefing-index">03 / Свежие доказательства</p><h2 id="evidence-title">Последние чеки</h2></div>
+            <a href="{{ url_for('index', view='receipts', period=period) }}">Весь архив</a>
+        </header>
+        {% if dashboard.recent_receipts %}
+        <div class="ledger-list">
+            {% for receipt in dashboard.recent_receipts %}
+            <a href="{{ url_for('view_receipt', receipt_id=receipt.id) }}" class="ledger-row">
+                <time datetime="{{ receipt.date or '' }}">{{ receipt.date or 'Без даты' }}</time>
+                <strong>{{ receipt.store or 'Без магазина' }}</strong>
+                <span>{{ receipt.item_count }} поз.</span>
+                {% if receipt.price_warning_count %}<span class="ledger-warning"><i class="bi bi-exclamation-triangle" aria-hidden="true"></i> {{ receipt.price_warning_count }} к проверке</span>{% else %}<span class="ledger-clear">Без сигналов</span>{% endif %}
+                <b>{{ "%.2f"|format(receipt.total) }} €</b>
+                <i class="bi bi-chevron-right" aria-hidden="true"></i>
+            </a>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="quiet-briefing"><i class="bi bi-receipt" aria-hidden="true"></i><div><strong>Новых чеков нет.</strong><p>После следующего импорта доказательства появятся здесь.</p></div></div>
+        {% endif %}
+    </section>
+</article>
+<script>
+document.querySelectorAll('.claim-trace summary').forEach(summary => {
+    summary.addEventListener('keydown', event => {
+        if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            summary.parentElement.open = !summary.parentElement.open;
+        }
+    });
+});
+</script>
+{% endif %}
+
+{% if view == "receipts" and receipts %}
+<script>
+const table = document.getElementById('receiptTable');
+const tbody = table.querySelector('tbody');
+const rows = Array.from(tbody.querySelectorAll('tr'));
+const sortStates = {};
+
+document.querySelectorAll('#receiptTable .sort-button').forEach(button => {
+    button.addEventListener('click', () => {
+        const th = button.closest('th');
+        const index = Array.from(th.parentNode.children).indexOf(th);
+        const type = button.dataset.sort;
+        sortStates[index] = !sortStates[index];
+        const sortedRows = [...rows].sort((a, b) => {
+            let valA = a.cells[index].textContent.trim().replace('#', '').replace('€', '');
+            let valB = b.cells[index].textContent.trim().replace('#', '').replace('€', '');
+            if (type === 'id' || type === 'total') {
+                valA = parseFloat(valA) || 0;
+                valB = parseFloat(valB) || 0;
+            } else if (type === 'date') {
+                valA = new Date(valA);
+                valB = new Date(valB);
+            }
+            return sortStates[index] ? (valA > valB ? 1 : -1) : (valA < valB ? 1 : -1);
+        });
+        tbody.innerHTML = '';
+        sortedRows.forEach(row => tbody.appendChild(row));
+        document.querySelectorAll('#receiptTable th[aria-sort]').forEach(header => { header.setAttribute('aria-sort', 'none'); });
+        document.querySelectorAll('#receiptTable .sort-icon').forEach(icon => { icon.textContent = '↕'; });
+        th.setAttribute('aria-sort', sortStates[index] ? 'ascending' : 'descending');
+        button.querySelector('.sort-icon').textContent = sortStates[index] ? '↑' : '↓';
+    });
+});
+</script>
+{% endif %}
+{% endblock %}

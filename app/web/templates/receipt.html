@@ -1,106 +1,170 @@
 {% extends "base.html" %}
-{% block title %}Чек №{{ receipt_id }}{% endblock %}
+{% block title %}{% if receipt %}{{ receipt.store or "Чек" }} · {{ receipt.date or receipt_id }}{% else %}Чек не найден{% endif %}{% endblock %}
+{% block body_class %}receipt-detail-page{% endblock %}
 {% block content %}
-<section class="page-header">
-    <div>
-        <p class="eyebrow">Детали</p>
-        <h1>Чек №{{ receipt_id }}</h1>
-    </div>
-    <a href="{{ url_for('index') }}" class="btn btn-outline-secondary">
+{% if not receipt %}
+<section class="receipt-detail-empty" aria-labelledby="receipt-not-found-title">
+    <a href="{{ return_path }}" class="receipt-back-link">
         <i class="bi bi-arrow-left" aria-hidden="true"></i>
-        Назад
+        Вернуться в архив
     </a>
+    <h1 id="receipt-not-found-title">Чек не найден</h1>
+    <p>Чек #{{ receipt_id }} отсутствует в архиве или был удалён.</p>
 </section>
+{% else %}
+<article class="receipt-detail-workspace" aria-labelledby="receipt-detail-title">
+    <header class="receipt-detail-header">
+        <div class="receipt-detail-identity">
+            <a href="{{ return_path }}" class="receipt-back-link">
+                <i class="bi bi-arrow-left" aria-hidden="true"></i>
+                Вернуться в архив
+            </a>
+            <h1 id="receipt-detail-title">{{ receipt.store or "Магазин не указан" }}</h1>
+            <p class="receipt-detail-metadata">
+                {% if receipt.date %}
+                <time datetime="{{ receipt.date }}">{{ receipt.date }}</time>
+                {% else %}
+                <span>Дата не указана</span>
+                {% endif %}
+                <span>Чек #{{ receipt.id }}</span>
+                <span>Номер {{ receipt.receipt_number or "не указан" }}</span>
+            </p>
+        </div>
+        <div class="receipt-detail-total">
+            <span>Итого по чеку</span>
+            <strong>{{ "%.2f"|format(receipt.total) }} €</strong>
+        </div>
+    </header>
 
-{% if category_updated %}
-<div class="inline-status">Категория обновлена</div>
-{% endif %}
+    {% if category_updated %}
+    <div class="inline-status" role="status">Категория обновлена</div>
+    {% endif %}
 
-<section class="surface">
-    <div class="receipt-summary">
-        <span>Итого</span>
-        <strong>{{ "%.2f"|format(total_sum) }} €</strong>
-    </div>
-    <div class="table-responsive">
-        <table class="table app-table align-middle">
-            <thead>
-                <tr>
-                    <th>Товар</th>
-                    <th>Категория</th>
-                    <th class="text-end">Кол-во</th>
-                    <th class="text-end">Цена</th>
-                    <th class="text-end">Статус</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for item in items %}
-                <tr>
-                    <td>{{ item['name'] }}</td>
-                    <td>
-                        <form method="post" action="{{ url_for('update_item_category', item_id=item['id']) }}" class="category-form">
-                            <label class="visually-hidden" for="category-{{ item['id'] }}">Категория</label>
-                            <div class="category-controls">
+    <section class="receipt-detail-band" aria-label="Контекст и состояние чека">
+        <dl>
+            <div>
+                <dt>Позиции</dt>
+                <dd>{{ items|length }}</dd>
+            </div>
+            <div>
+                <dt>Требуют проверки</dt>
+                <dd>{{ review_count }}</dd>
+            </div>
+            <div>
+                <dt>Статус данных</dt>
+                <dd>{% if review_count %}Есть вопросы{% else %}Проверено{% endif %}</dd>
+            </div>
+        </dl>
+        <button
+            type="button"
+            class="btn btn-outline-secondary receipt-drawer-button"
+            data-open-receipt-drawer
+            data-receipt-id="{{ receipt.id }}"
+            data-receipt-store="{{ receipt.store or 'Магазин не указан' }}"
+            data-receipt-number="{{ receipt.receipt_number or 'не указан' }}"
+            data-receipt-item-count="{{ items|length }}"
+            data-receipt-review-count="{{ review_count }}"
+        >
+            Источники и ограничения
+        </button>
+    </section>
+
+    <section class="receipt-detail-items" aria-labelledby="receipt-items-title">
+        <div class="receipt-detail-section-heading">
+            <div>
+                <h2 id="receipt-items-title">Состав чека</h2>
+                <p>Название товара — основной слой; категория, проверка и ценовой контекст остаются вторичными.</p>
+            </div>
+            {% if item_total_sum != receipt.total %}
+            <p class="receipt-total-note">Сумма строк: {{ "%.2f"|format(item_total_sum) }} €</p>
+            {% endif %}
+        </div>
+
+        {% if items %}
+        <div class="receipt-item-head" aria-hidden="true">
+            <span>Товар</span>
+            <span>Количество</span>
+            <span>Цена</span>
+            <span>Категория</span>
+            <span>Статус</span>
+        </div>
+        <div class="receipt-item-list" data-receipt-item-list>
+            {% for item in items %}
+            <div class="receipt-item-row receipt-detail-item{% if item.needs_review %} needs-review{% endif %}" data-receipt-item-row>
+                <strong data-label="Товар">{{ item.display_name }}</strong>
+                <span data-label="Количество">{{ item.quantity_display }}</span>
+                <span data-label="Цена" class="receipt-detail-item-price">{{ "%.2f"|format(item.price) }} €</span>
+                <div data-label="Категория" class="receipt-detail-category">
+                    <details class="receipt-category-editor">
+                        <summary>{{ item.category }}</summary>
+                        <form method="post" action="{{ url_for('update_item_category', item_id=item.id) }}" class="category-form">
+                            <label for="category-{{ item.id }}">
+                                <span>Категория</span>
                                 <select
-                                    id="category-{{ item['id'] }}"
+                                    id="category-{{ item.id }}"
                                     name="category"
                                     class="form-select form-select-sm category-select"
-                                    onchange="this.form.submit()"
                                 >
                                     {% for category in category_options %}
-                                        <option value="{{ category }}" {% if category == item['category'] %}selected{% endif %}>{{ category }}</option>
+                                    <option value="{{ category }}" {% if category == item.category %}selected{% endif %}>{{ category }}</option>
                                     {% endfor %}
                                 </select>
-                                <label class="visually-hidden" for="new-category-{{ item['id'] }}">Новая категория</label>
-                                <input
-                                    id="new-category-{{ item['id'] }}"
-                                    name="new_category"
-                                    class="form-control form-control-sm category-new-input"
-                                    placeholder="Новая"
-                                    autocomplete="off"
-                                >
-                            </div>
+                            </label>
+                            <label for="category-scope-{{ item.id }}">
+                                <span>Применить</span>
+                                <select id="category-scope-{{ item.id }}" name="category_scope" class="form-select form-select-sm category-scope">
+                                    <option value="product" selected>Ко всему товару</option>
+                                    <option value="item">Только к этой позиции</option>
+                                </select>
+                            </label>
+                            <button class="btn btn-outline-primary btn-sm" type="submit">Сохранить</button>
+                            <small>Источник: {{ item.category_source_label }}</small>
                         </form>
-                    </td>
-                    <td class="text-end">{{ "%.0f"|format(item['quantity']) }}</td>
-                    <td class="amount-cell">{{ "%.2f"|format(item['price']) }} €</td>
-                    <td class="text-end">
-                        {% if item['price_status'] %}
-                            <span
-                                class="price-status price-status-{{ item['price_status']['kind'] }}"
-                                title="{{ item['price_status']['tooltip'] }}"
-                            >
-                                {{ item['price_status']['label'] }}
-                            </span>
-                        {% endif %}
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
-</section>
+                    </details>
+                </div>
+                <div data-label="Статус" class="receipt-detail-status">
+                    {% if item.needs_review %}
+                    <span class="receipt-badge warning">К проверке</span>
+                    {% else %}
+                    <span class="receipt-badge positive">Проверено</span>
+                    {% endif %}
+                    {% if item.price_status %}
+                    <span class="receipt-price-context">
+                        {% if item.price_status.kind == "cheap" %}Ниже медианы
+                        {% elif item.price_status.kind == "expensive" %}Выше медианы
+                        {% else %}В обычном диапазоне{% endif %}
+                        · {{ "%+.1f"|format(item.price_status.deviation) }}%
+                    </span>
+                    {% else %}
+                    <span class="receipt-price-context">Нет сопоставимой истории цен</span>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="receipt-item-empty">
+            <h2>В чеке нет товарных позиций</h2>
+            <p>Метаданные документа сохранены, но распознанные строки отсутствуют.</p>
+        </div>
+        {% endif %}
+    </section>
 
-<section class="surface receipt-insights">
-    <div class="section-title">
-        <h2>Итоги по чеку</h2>
-    </div>
-    <div class="receipt-insights-grid">
-        <div>
-            <span>Всего товаров</span>
-            <strong>{{ receipt_summary.total_items }}</strong>
-        </div>
-        <div>
-            <span>Дешевле обычного</span>
-            <strong>{{ receipt_summary.cheap }}</strong>
-        </div>
-        <div>
-            <span>Дороже обычного</span>
-            <strong>{{ receipt_summary.expensive }}</strong>
-        </div>
-        <div>
-            <span>Без истории</span>
-            <strong>{{ receipt_summary.insufficient }}</strong>
-        </div>
-    </div>
-</section>
+    {% if review_count %}
+    <section class="receipt-detail-review" aria-labelledby="receipt-review-title">
+        <span>Требует внимания</span>
+        <h2 id="receipt-review-title">{{ review_count }} поз. стоит сверить с исходным чеком</h2>
+        <p>Сигнал означает недостаточную уверенность распознавания или некорректную нормализованную цену. Он не утверждает, что покупка или цена ошибочны.</p>
+    </section>
+    {% endif %}
+</article>
+
+{% set evidence_receipt_id = receipt.id %}
+{% set evidence_store = receipt.store or "Магазин не указан" %}
+{% set evidence_receipt_number = receipt.receipt_number %}
+{% set evidence_item_count = items|length %}
+{% set evidence_review_count = review_count %}
+{% include "_receipt_evidence_drawer.html" %}
+<script src="{{ url_for('static', filename='receipt-evidence-drawer.js') }}" defer></script>
+{% endif %}
 {% endblock %}

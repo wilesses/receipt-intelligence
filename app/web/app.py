@@ -1,5 +1,8 @@
+import os
+
 from flask import Flask
 
+from app.category_keywords import SOURCE_LABELS
 from app.db import create_tables
 from app.web.routes import init_routes
 
@@ -32,6 +35,10 @@ def category_color(category):
 def create_app():
     create_tables()
     app = Flask(__name__)
+    app.secret_key = os.getenv("SECRET_KEY", "receipt-tracker-dev")
     init_routes(app)
-    app.jinja_env.globals.update(category_color=category_color)
+    app.jinja_env.globals.update(
+        category_color=category_color,
+        category_source_label=lambda source: SOURCE_LABELS.get(source or "rule", source or "rule"),
+    )
     return app

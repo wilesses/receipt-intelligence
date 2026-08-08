@@ -1,84 +1,92 @@
 {% extends "base.html" %}
+{% from "_selection_components.html" import selection_row, merge_command_band %}
 {% block title %}Объединение товаров{% endblock %}
+{% block body_class %}review-page merge-page{% endblock %}
 {% block content %}
-<section class="page-header">
-    <div>
-        <p class="eyebrow">Товары</p>
-        <h1>Объединение товаров</h1>
-    </div>
-    <a href="{{ url_for('analytics') }}" class="btn btn-outline-secondary">
-        <i class="bi bi-arrow-left" aria-hidden="true"></i>
-        Аналитика
-    </a>
-</section>
+<article class="merge-workspace" aria-labelledby="merge-title">
+    <header class="page-header review-page-header merge-page-header">
+        <div>
+            <h1 id="merge-title">Объединение товаров</h1>
+            <p>Выберите исходные товарные группы и заранее задайте имя, под которым они будут собраны.</p>
+        </div>
+        <p class="review-queue-count"><strong>{{ products|length }}</strong> доступно сейчас</p>
+    </header>
 
-{% if merged_count is not none %}
-<div class="inline-status">Товары объединены: {{ merged_count }} строк обновлено</div>
-{% endif %}
+    {% if merged_count is not none %}
+        <div class="state-message state-neutral merge-result-status" role="status">
+            Объединение завершено. Обновлено строк: {{ merged_count }}.
+        </div>
+    {% endif %}
 
-<section class="surface">
-    <form method="get" action="{{ url_for('products_merge') }}" class="merge-search">
-        <label class="search-control">
-            <i class="bi bi-search" aria-hidden="true"></i>
-            <input class="form-control" type="search" name="q" value="{{ query }}" placeholder="Поиск товара" autocomplete="off">
-        </label>
-        <button class="btn btn-outline-primary" type="submit">
-            <i class="bi bi-search" aria-hidden="true"></i>
-            Найти
-        </button>
-    </form>
-</section>
-
-<form method="post" action="{{ url_for('products_merge_submit') }}">
-    <input type="hidden" name="q" value="{{ query }}">
-    <section class="surface merge-panel">
-        <div class="merge-actions">
-            <label>
-                <span>Каноническое название</span>
-                <input class="form-control" type="text" name="canonical_name" placeholder="Например: Молоко 2.5%" autocomplete="off" required>
+    <section class="review-toolbar merge-toolbar" aria-labelledby="merge-search-title">
+        <div class="review-toolbar-heading">
+            <h2 id="merge-search-title">Поиск и выбор</h2>
+            <p>Поиск фильтрует доступный набор, не изменяя уже сохранённые данные.</p>
+        </div>
+        <form method="get" action="{{ url_for('products_merge') }}" class="merge-filter-grid">
+            <label class="merge-search-field">
+                <span>Поиск товара</span>
+                <input class="form-control" type="search" name="q" value="{{ query }}" placeholder="Исходное или каноническое название" autocomplete="off">
             </label>
             <button class="btn btn-primary" type="submit">
-                <i class="bi bi-intersect" aria-hidden="true"></i>
-                Объединить
+                <i class="bi bi-search" aria-hidden="true"></i>
+                Найти
             </button>
-        </div>
-
-        <div class="table-responsive">
-            <table class="table app-table align-middle merge-table">
-                <thead>
-                    <tr>
-                        <th class="merge-check">
-                            <span class="visually-hidden">Выбор</span>
-                        </th>
-                        <th>Название</th>
-                        <th class="text-end">Строк</th>
-                        <th class="text-end">Чеков</th>
-                        <th>Canonical name</th>
-                    </tr>
-                </thead>
-                <tbody>
-                {% for product in products %}
-                    <tr>
-                        <td class="merge-check">
-                            <input class="form-check-input" type="checkbox" name="selected_names" value="{{ product[0] }}" aria-label="Выбрать {{ product[0] }}">
-                        </td>
-                        <td>
-                            <a href="{{ url_for('item_profile', name=product[0]) }}">{{ product[0] }}</a>
-                        </td>
-                        <td class="text-end">{{ product[1] }}</td>
-                        <td class="text-end">{{ product[2] }}</td>
-                        <td class="muted-cell">{{ product[3] or '—' }}</td>
-                    </tr>
-                {% else %}
-                    <tr>
-                        <td colspan="5">
-                            <p class="empty-message">Ничего не найдено.</p>
-                        </td>
-                    </tr>
-                {% endfor %}
-                </tbody>
-            </table>
-        </div>
+            {% if query %}
+                <a class="btn btn-outline-secondary" href="{{ url_for('products_merge') }}">Сбросить поиск</a>
+            {% endif %}
+        </form>
     </section>
-</form>
+
+    {% if products %}
+    <form method="post" action="{{ url_for('products_merge_submit') }}" class="merge-form" data-merge-form>
+        <div class="merge-selection-layout">
+            <section class="selection-table-region" aria-labelledby="selection-table-title">
+                <header class="review-queue-heading merge-selection-heading">
+                    <div>
+                        <h2 id="selection-table-title">Исходные товары</h2>
+                        <p>Отметьте группы, которые должны получить одно каноническое имя.</p>
+                    </div>
+                    <span>{{ products|length }} результатов</span>
+                </header>
+
+                <div class="selection-table-wrap">
+                    <table class="selection-table" data-selection-table>
+                        <thead>
+                            <tr>
+                                <th scope="col">Выбор</th>
+                                <th scope="col">Исходное название</th>
+                                <th scope="col" class="selection-number">Строк</th>
+                                <th scope="col" class="selection-number">Чеков</th>
+                                <th scope="col">Каноническое имя сейчас</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for product in products %}
+                                {{ selection_row(product) }}
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            {{ merge_command_band(query) }}
+        </div>
+    </form>
+    {% else %}
+        <section class="review-empty-state merge-empty-state" aria-labelledby="merge-empty-title">
+            <span class="review-status review-status-complete">Набор пуст</span>
+            {% if query %}
+                <h2 id="merge-empty-title">По текущему поиску товары не найдены</h2>
+                <p>Измените запрос или вернитесь к полному списку доступных товарных групп.</p>
+                <a class="btn btn-outline-secondary" href="{{ url_for('products_merge') }}">Показать все товары</a>
+            {% else %}
+                <h2 id="merge-empty-title">Список товаров пока пуст</h2>
+                <p>Товарные группы появятся здесь после импорта чеков.</p>
+            {% endif %}
+        </section>
+    {% endif %}
+</article>
+
+<script src="{{ url_for('static', filename='product-merge.js') }}" defer></script>
 {% endblock %}

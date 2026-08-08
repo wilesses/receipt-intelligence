@@ -12,8 +12,9 @@ PRAGMA foreign_keys = ON
 
 Фактическая база на момент документирования содержит:
 
-- `receipts`: 355 строк;
-- `items`: 3519 строк;
+- `receipts`: 360 строк;
+- `items`: 3580 строк;
+- `items.normalized_name`: заполнено 3580 из 3580 строк;
 - `sqlite_sequence`: служебная таблица SQLite для AUTOINCREMENT.
 
 Важно: фактическая схема текущего `data/receipts.db` не полностью совпадает с `CREATE TABLE IF NOT EXISTS` в коде для новой базы. В существующей базе `receipt_number` не имеет `UNIQUE` constraint на уровне схемы, а внешний ключ `items.receipt_id` создан без `ON DELETE CASCADE`. Код дополнительно проверяет дубликаты перед вставкой.
@@ -96,9 +97,19 @@ CREATE INDEX idx_receipts_store ON receipts(store);
 | `name` | `TEXT` | да | нет | нет | Исходное название товара из парсера. |
 | `quantity` | `REAL` | да | нет | нет | Количество из чека. |
 | `price` | `REAL` | да | нет | нет | Итоговая цена товарной строки. |
+| `line_total` | `REAL` | да | нет | нет | Итоговая цена товарной строки в Price Model v2. Сохраняется равной `price` для совместимости старой аналитики. |
+| `unit_price` | `REAL` | да | нет | нет | Цена за единицу из парсера или расчет `line_total / quantity`. |
+| `quantity_unit` | `TEXT` | да | нет | нет | Единица количества: `piece`, `kg`, `g`, `l`, `ml`, `unknown`. |
+| `package_size` | `REAL` | да | нет | нет | Размер упаковки, извлеченный из названия. |
+| `package_unit` | `TEXT` | да | нет | нет | Единица упаковки: `ml`, `g`, `piece`, `unknown`. |
+| `normalized_unit_price` | `REAL` | да | нет | нет | Нормализованная цена для сравнения: EUR/L, EUR/kg или EUR/piece. |
+| `normalized_price_unit` | `TEXT` | да | нет | нет | Тип нормализованной цены: `eur_per_l`, `eur_per_kg`, `eur_per_piece`, `unknown`. |
+| `price_parse_source` | `TEXT` | да | нет | нет | Источник интерпретации цены: `parser`, `package_name`, `weighted_inference`, `inferred_piece`, `service_line`, `rejected` или `unresolved`. |
+| `price_parse_confidence` | `REAL` | да | нет | нет | Уверенность Price Model. |
 | `category` | `TEXT` | да | нет | нет | Категория товара. Обычно назначается `categorize_from_name()`. |
 | `canonical_name` | `TEXT` | да | нет | нет | Ручное объединенное название товара. Используется аналитикой вместо `name`, если заполнено. |
 | `normalized_name` | `TEXT` | да | нет | нет | Нормализованное название для Product Normalizer и RapidFuzz suggestions. Не заменяет `name` и не влияет на `canonical_name`. |
+| `category_source` | `TEXT` | нет | `rule` | нет | Источник категории: `rule`, `manual`, `inherited`, `fallback`. |
 
 ### Поля по текущему коду создания новой таблицы
 
@@ -113,12 +124,22 @@ CREATE TABLE IF NOT EXISTS items (
     normalized_name TEXT,
     quantity REAL NOT NULL DEFAULT 1,
     price REAL NOT NULL DEFAULT 0,
+    line_total REAL,
+    unit_price REAL,
+    quantity_unit TEXT,
+    package_size REAL,
+    package_unit TEXT,
+    normalized_unit_price REAL,
+    normalized_price_unit TEXT,
+    price_parse_source TEXT,
+    price_parse_confidence REAL,
     category TEXT NOT NULL DEFAULT 'прочее',
+    category_source TEXT NOT NULL DEFAULT 'rule',
     FOREIGN KEY(receipt_id) REFERENCES receipts(id) ON DELETE CASCADE
 )
 ```
 
-`create_tables()` также добавляет `category`, `canonical_name` и `normalized_name`, если этих колонок нет в старой базе.
+`create_tables()` также добавляет `category`, `canonical_name`, `normalized_name`, `category_source` и поля Price Model v2, если этих колонок нет в старой базе. Таблица `items` не пересоздается.
 
 ### Primary key
 
@@ -151,6 +172,8 @@ CREATE INDEX idx_items_category ON items(category);
 CREATE INDEX idx_items_name ON items(name);
 CREATE INDEX idx_items_canonical_name ON items(canonical_name);
 CREATE INDEX idx_items_normalized_name ON items(normalized_name);
+CREATE INDEX idx_items_category_source ON items(category_source);
+CREATE INDEX idx_items_normalized_price_unit ON items(normalized_price_unit);
 ```
 
 ### Частое использование
@@ -166,6 +189,12 @@ COALESCE(NULLIF(items.canonical_name, ''), items.name)
 
 - `quantity`: расчет цены за единицу.
 - `price`: сумма расходов, графики, топ товаров, профиль товара.
+- `line_total`: явная итоговая цена строки для Price Model; сейчас равна `price`.
+- `unit_price`: цена за единицу из parser output или расчетная цена.
+- `quantity_unit`: источник понимания штуки/кг/литры/unknown.
+- `package_size`, `package_unit`: размер упаковки из названия товара.
+- `normalized_unit_price`, `normalized_price_unit`: база для сравнения EUR/L, EUR/kg или EUR/piece.
+- `price_parse_source`, `price_parse_confidence`: диагностика качества ценовых данных.
 - `category`: график категорий и фильтр категории.
 
 ### Поля, используемые аналитикой
@@ -175,7 +204,45 @@ COALESCE(NULLIF(items.canonical_name, ''), items.name)
 - `category`: фильтр и группировка категорий.
 - `name` и `canonical_name`: группировка товаров, профиль товара, автодополнение.
 - `normalized_name`: не используется существующей аналитикой; используется только Product Suggestions.
+- `normalized_unit_price`, `normalized_price_unit`: используются в `/item/<name>` и `/receipt/<id>` как предпочтительная база сравнения цены, если есть достаточно истории.
 - `receipt_id`: join с `receipts`.
+
+### Price & Quantity Model v2
+
+Модель цен реализована в `app/price_model.py`. Она evidence-first: сначала использует подтвержденные parser data, затем однозначную упаковку из названия или математически согласованный weighted inference. Она не меняет `items.name`, `items.canonical_name`, `items.normalized_name`, `items.category`, `items.quantity` и `items.price`.
+
+Семантика:
+
+- `items.price` остается legacy-полем итоговой суммы строки и продолжает питать существующую аналитику;
+- `items.line_total` явно хранит ту же итоговую сумму строки;
+- `items.unit_price` хранит цену за единицу из парсера или расчет `line_total / quantity`;
+- `quantity_unit` приходит из Rimi parser для `gab`/`kg`, у Maxima пока `unknown`;
+- `package_size` и `package_unit` извлекаются из названия товара;
+- `normalized_unit_price` считается как EUR/L, EUR/kg или EUR/piece;
+- `price_parse_confidence` используется экраном качества данных `/data-quality/prices`.
+
+Confidence отражает качество evidence:
+
+- `0.95` — единица и цена подтверждены parser data;
+- `0.85` — однозначный размер упаковки извлечен из названия (`package_name`);
+- `0.75` — весовая единица выведена только при согласованности `quantity * unit_price ~= line_total` (`weighted_inference`);
+- `0.70` — предположение поштучной покупки (`inferred_piece`), не примененное к основной базе;
+- `NULL` — нормализованная цена не рассчитана.
+
+Служебные позиции (депозит, упаковка, бумажные и многоразовые пакеты, подтвержденные кассовые строки) получают `service_line` и остаются без нормализованной цены. Узкие правила не меняют исходную категорию. Multipack, неоднозначные упаковки, parser contamination и malformed data отклоняются или остаются unresolved.
+
+Backfill существующих данных находится в `app/backfill_price_data.py`:
+
+```text
+python -m app.backfill_price_data --sources package_name,weighted_inference
+python -m app.backfill_price_data --apply --sources package_name,weighted_inference
+```
+
+Dry-run является режимом по умолчанию и ничего не записывает. Write-режим требует явный `--apply` и явный allowlist источников. Сейчас разрешены только `package_name` и `weighted_inference`; полный apply без отдельного решения запрещен. Field-level merge заполняет отсутствующие значения и не заменяет существующее значение более слабым результатом. High-confidence conflicts и IDs 3544, 3578, 3579, 3581 сохраняются для manual review.
+
+Перед write скрипт начинает транзакцию, использует SQLite Backup API через `app.db:backup_database()` и принимает backup только после `PRAGMA integrity_check = ok`; тест подтверждает включение committed WAL data. Завершенный selective backfill обновил 2184 строки: 2179 `package_name` и 5 `weighted_inference`; итоговые normalized units — 1664 `eur_per_kg`, 452 `eur_per_l`, 68 `eur_per_piece`. После него заполнено: `line_total`, `unit_price`, `quantity_unit`, `package_unit`, `normalized_price_unit`, `price_parse_source`, `price_parse_confidence` — по 2239 строк; `package_size` — 2218; `normalized_unit_price` — 2225. Повторный selective dry-run показывает 0 изменений.
+
+Нормализованная цена остается unresolved у 1094 строк. Selective audit отдельно исключает `service_line` 656, `inferred_piece` 261, rejected 154, unresolved-source 281 и high-confidence conflicts 4; группы могут пересекаться и не должны суммироваться как общий unresolved count. Полный apply не выполнялся.
 
 ## Таблица `sqlite_sequence`
 
@@ -191,6 +258,32 @@ COALESCE(NULLIF(items.canonical_name, ''), items.name)
 | `seq` | без явного типа | Последнее значение sequence. |
 
 Проект напрямую эту таблицу не читает и не изменяет.
+
+## Таблица `product_category_rules`
+
+### Назначение
+
+Хранит ручное решение категории для товарной группы. Правило применяется к будущим импортам как `category_source = inherited` и к текущей группе при ручном выборе как `category_source = manual`.
+
+### Поля
+
+| Поле | Тип | Null | Default | Primary key | Описание |
+|---|---|---:|---|---:|---|
+| `id` | `INTEGER` | нет | нет | да | Внутренний ID правила. |
+| `product_key` | `TEXT` | нет | нет | нет | Устойчивый ключ группы: normalized `canonical_name`, иначе `normalized_name`, иначе normalized `items.name`. |
+| `category` | `TEXT` | нет | нет | нет | Каноническая категория. |
+| `source` | `TEXT` | нет | `manual` | нет | Сейчас хранится `manual`. |
+| `created_at` | `TEXT` | нет | нет | нет | UTC timestamp создания. |
+| `updated_at` | `TEXT` | нет | нет | нет | UTC timestamp последнего изменения. |
+
+### Constraints и индексы
+
+```sql
+product_key TEXT NOT NULL UNIQUE
+CREATE INDEX idx_product_category_rules_key ON product_category_rules(product_key);
+```
+
+Таблица не объединяет товары и не меняет `canonical_name`.
 
 ## Связи
 
@@ -214,6 +307,16 @@ items
   name TEXT
   canonical_name TEXT
   normalized_name TEXT
+  line_total REAL
+  unit_price REAL
+  quantity_unit TEXT
+  package_size REAL
+  package_unit TEXT
+  normalized_unit_price REAL
+  normalized_price_unit TEXT
+  price_parse_source TEXT
+  price_parse_confidence REAL
+  category_source TEXT
   quantity REAL
   price REAL
   category TEXT
@@ -248,11 +351,18 @@ SELECT id FROM receipts WHERE receipt_number = ?;
 INSERT INTO receipts (date, store, total, receipt_number)
 VALUES (?, ?, ?, ?);
 
-INSERT INTO items (receipt_id, name, normalized_name, quantity, price, category)
-VALUES (?, ?, ?, ?, ?, ?);
+INSERT INTO items (
+    receipt_id, name, normalized_name, quantity, price, line_total, unit_price,
+    quantity_unit, package_size, package_unit, normalized_unit_price,
+    normalized_price_unit, price_parse_source, price_parse_confidence,
+    category, category_source
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 ```
 
-`normalized_name` считается из `items.name` через `normalize_product_name()`. `canonical_name` при импорте не заполняется.
+`normalized_name` считается из `items.name` через `normalize_product_name()`. Категория получает `category_source`: `inherited`, если найдено manual rule; иначе `rule` или `fallback`. `canonical_name` при импорте не заполняется.
+
+Поля Price Model считаются через `app.price_model.derive_price_data()` в общей точке вставки `add_receipt_with_items()`.
 
 ### Backfill normalized_name
 

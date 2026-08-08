@@ -277,3 +277,92 @@ app/web/templates/
   фильтры, графики, формы ручной правки
 ```
 
+## Category Engine v2
+
+Category Engine v2 добавляет слой ручных решений поверх существующего словарного движка. `CATEGORY_KEYWORDS` не переписан полностью, keywords сохранены.
+
+### Канонические категории
+
+Единый список находится в `app/category_keywords.py:CANONICAL_CATEGORIES`:
+
+- `служебные расходы`;
+- `мясо`;
+- `молочные`;
+- `овощи`;
+- `фрукты`;
+- `выпечка`;
+- `сладости/снеки`;
+- `чай/кофе`;
+- `напитки`;
+- `бытовое`;
+- `корма`;
+- `детское`;
+- `аптека`;
+- `быстрое питание`;
+- `замороженные продукты`;
+- `одежда`;
+- `прочее`.
+
+Legacy aliases:
+
+- `молочка` -> `молочные`;
+- `сладости` -> `сладости/снеки`;
+- `кот` -> `корма`;
+- `ребенок` -> `детское`.
+
+`normalize_category_name()` возвращает `прочее` для `None` и пустой строки, применяет alias mapping и не удаляет неизвестную категорию молча.
+
+### category_source
+
+`items.category_source` хранит источник категории:
+
+- `rule` - категория назначена `CATEGORY_KEYWORDS`;
+- `manual` - категория выбрана пользователем;
+- `inherited` - категория взята из `product_category_rules` при импорте;
+- `fallback` - правила не сработали, использовано `прочее`.
+
+Существующие строки после миграции получают default `rule`. Старые ручные изменения восстановить нельзя: audit log раньше отсутствовал.
+
+### categorize_with_source
+
+`categorize_with_source(name)` возвращает:
+
+- `("категория", "rule")`, если keyword сработал;
+- `("прочее", "fallback")`, если совпадений нет.
+
+`categorize_from_name()` сохранен как совместимый wrapper для старых вызовов.
+
+### product_category_rules
+
+Таблица `product_category_rules` хранит ручную категорию товарной группы. `product_key` считается в `app/category_rules.py:get_product_key()`:
+
+```text
+normalize_product_name(canonical_name), если canonical_name заполнен
+иначе normalized_name
+иначе normalize_product_name(items.name)
+```
+
+Правило не объединяет товары, не меняет `items.name`, не меняет `canonical_name` и не использует RapidFuzz score.
+
+### Ручная смена категории
+
+Route `POST /item/<int:item_id>/category` поддерживает:
+
+- `scope=item` - обновляется только одна позиция, `category_source = manual`, rule не создается;
+- `scope=product` - создается/обновляется `product_category_rules`, затем обновляется вся точная группа, `category_source = manual`.
+
+По умолчанию UI выбирает `Весь товар`.
+
+### Review screen
+
+`/products/review` показывает агрегированные группы, если есть хотя бы одно условие:
+
+- категория `прочее`;
+- `category_source = fallback`;
+- внутри группы несколько категорий;
+- внутри группы есть `manual` и `rule`;
+- пустой `normalized_name`;
+- нет manual rule;
+- категория пустая.
+
+Страница показывает имя, алиасы, счетчики строк и чеков, категории, источники, последнюю дату, магазины, normalized name, canonical flag и наличие manual rule. Быстрое исправление создает/обновляет rule и применяет category ко всей точной группе.

@@ -1,0 +1,58 @@
+# Current Context
+
+## Confirmed state
+
+- Main database: `data/receipts.db`, 360 receipts and 3580 items.
+- Production Receipts archive (`/?view=receipts`) now uses the Receipt Workspace composition: compact header, supported GET filters, document-like receipt rows, inline expansion with real item previews, honest evidence summary, and drawer for currently available receipt/extraction state.
+- The Receipts archive includes a compact current-month evidence band above filters: real monthly spend, secondary forecast eligibility state, receipt/item-line counts, and Top 3 products by month spend.
+- The archive keeps existing URLs and behavior: `/` with `view=receipts`, `period`, `store_search`, upload link, return to overview, client sorting, and `/receipt/<id>` detail fallback.
+- `items.normalized_name` is filled for all 3580 items.
+- Selective Price Model backfill is complete. Only `package_name` and `weighted_inference` were applied: 2184 rows updated (`package_name`: 2179, `weighted_inference`: 5).
+- Resulting selected-source distribution: `eur_per_kg` 1664, `eur_per_l` 452, `eur_per_piece` 68.
+- `inferred_piece`, `service_line`, rejected/suspicious and unresolved results were not applied.
+- Manual-review item IDs 3544, 3578, 3579 and 3581 were preserved.
+- Repeated selective dry-run for `package_name,weighted_inference` reports 0 rows to update.
+- 1094 rows still have unresolved normalized price; excluded audit groups include service lines, inferred pieces, rejected/ambiguous data and four high-confidence conflicts.
+- Parser Quality v2 is implemented at the shared `parse_receipt()` boundary. Safe decimal whitespace is repaired; receipt/cashier/service lines and proven malformed OCR candidates are rejected before persistence.
+- `lkg`, `m1`, unsafe split decimals and glued package tokens are never guessed. Valid multipacks remain unchanged and unresolved.
+- Read-only `python -m app.audit_parser_quality` projects 8 corrected, 694 rejected, 138 unresolved and 2740 unchanged rows from the current 3580 stored names.
+- Analytics Chart.js lifecycle now reconciles both the local instance map and the Chart.js canvas registry before every remount. Repeated filters, recovery from an empty slice, and dark/light theme rerenders preserve the current datasets without leaking canvas ownership.
+- Analytics lifecycle verification passes: 8 focused unit/UI tests and a browser sequence covering all purchases, `фрукты`, reset, Rimi, an existing product, an empty product result, recovery, and theme rerender.
+- Motion cleanup is complete for the application shell, Archive drawer/disclosure, Upload progress, and Analytics product transitions. Global smooth scrolling and blanket `.01ms` reduced-motion overrides are removed; drawer exit completes before `hidden` and restores focus; Analytics chart/container height transitions are absent.
+- Category Review (`/products/review`) now uses the Review Workspace composition: compact header, preserved GET toolbar, one queue summary surface, document-like decision items, real review reasons, existing category confirmation POST, links to existing item/receipt routes, and a completed empty state. No category logic or backend behavior changed.
+- Shared Jinja review primitives live in `app/web/templates/_review_components.html`: status, reason, summary, actions, and review item. They are designed for later Suggestions/Merge/Price Quality migration without forcing one universal layout.
+- Category Review browser verification covers populated/empty queues, long names, 375/390/768/desktop widths, dark/light themes, 44px controls, duplicate IDs, horizontal overflow, and console errors. The in-app browser could not reliably synthesize Tab/Enter for the hidden skip-link; native control semantics and structural tests remain verified.
+- Suggestions (`/products/suggestions`) now uses a Comparison Workspace composition: compact preserved GET filters, one queue summary, symmetric product pairs, primary difference signals, expandable real matcher reasons, existing item links, the existing merge destination, and transient client-only dismiss. No matcher algorithm, route, merge behavior, or database state changed.
+- Suggestions reuses the Review status, reason, and summary primitives while keeping a dedicated `ComparisonPair` macro in `app/web/templates/_comparison_components.html`; it intentionally does not reuse the decision-form layout from Category Review.
+- Suggestions browser verification covers real populated data, filtered no-results, 50 rendered pairs, long names, desktop/mobile pair structure, dark/light themes, duplicate IDs, horizontal overflow, native disclosure markup, and console errors. The in-app browser still could not reliably synthesize keyboard Tab focus; native links/buttons/details and visible focus styles remain structurally verified.
+- Product Merge (`/products/merge`) now uses a Review / Bulk Selection Workspace: compact header and search toolbar, dense selection records, selected state expressed by text and structure as well as color, a desktop-sticky/mobile-flow command band, selected-name list, row and receipt-link impact summaries, visible canonical-name label, whitespace validation, reset, and the unchanged merge POST action.
+- Merge-specific Jinja primitives live in `app/web/templates/_selection_components.html`; the selection lifecycle is isolated in `app/web/static/product-merge.js`. The route, query shape, merge update semantics, database, parser, and normalized product logic were not changed.
+- Merge browser verification covers two selected products, selected totals, whitespace-only canonical-name validation, reset with focus restore, filtered no-results, long names, 1440/390/360 widths, dark/light themes, no horizontal overflow, and no page exceptions. Browser CDN requests are denied by the test sandbox, so screenshots simulate the normal collapsed Bootstrap mobile navigation while leaving application files unchanged.
+- Price Quality (`/data-quality/prices`) now uses a Review / Diagnostic Workspace: one coverage evidence band, the five unchanged GET problem filters before results, filter-specific evidence notes, a dense diagnostic register with stable numeric columns, and hierarchical mobile records. The route SQL, issue categories, limits, Price Model calculations, parser, and database were not changed.
+- Price Quality reuses the shared Review status and empty-state patterns; narrow Jinja primitives `CoverageBand`, `ProblemSelector`, and `DiagnosticRow` live in `app/web/templates/_diagnostic_components.html`. It distinguishes an empty database, a healthy all-problems set, and filtered no-results without showing an empty table.
+- Price Quality browser verification covers populated and filtered states, a real empty `suspicious` slice, 1000/390/360 widths, dark/light themes, zero-value de-emphasis, native focus visibility, no horizontal overflow, and no console errors. The in-app browser could focus native links but could not reliably dispatch Enter navigation; click navigation and structural keyboard semantics remain verified.
+- Item Profile (`/item/<name>`) now uses a document-like Product Dossier composition: compact identity, one summary surface, a dominant Price Story, a purchase register, and related stores/names/format context. Existing category forms, receipt links, route, SQL, Price Model, normalized-product logic, and database behavior remain unchanged.
+- Product Dossier primitives `ProductSummary`, `PriceStory`, and `PurchaseRegister` live in `app/web/templates/_product_dossier_components.html`; Chart.js lifecycle and honest empty/error states live in `app/web/static/item-profile.js`. The monthly chart remains the existing legacy `price / quantity` series and is explicitly labelled as not package-normalized.
+- Item Profile browser verification covers a four-purchase/two-store product, a 47-purchase product, one purchase, a missing product, 1000/390/360 widths, dark/light theme rerender, 44px controls, duplicate IDs, horizontal overflow, and console errors. Product names containing `/` remain unreachable through the current Flask `<name>` converter, and the route cannot distinguish a missing product from a product with no purchases without backend changes.
+- Upload (`/upload`) now uses a Focused Task Workspace: one primary PDF selection surface, an explicit file queue, one import command bar, and Gmail import as a visually secondary source. Existing `/upload` and `/gmail/fetch` endpoints, the multipart `pdfs` payload, importer, parser, routes, and database behavior remain unchanged.
+- Upload interaction is isolated in `app/web/static/upload-workspace.js`. It preserves drag-and-drop and multiple-file selection, renders filenames and server results through safe DOM APIs, keeps progress on `transform: scaleX`, and exposes distinct empty, busy, success, warning, and error states without adding a frontend dependency.
+- Upload browser verification covers empty and two-file queue states, a long filename, 1000/390/360 widths, dark/light themes, 44px controls, duplicate IDs, horizontal overflow, and console errors. A real import and Gmail fetch were intentionally not executed against production data; their existing request contracts are covered structurally and by route tests.
+- The full suite currently runs 171 tests: 168 pass and the same 3 pre-existing calendar-sensitive Archive/Home failures remain because July fixtures still expect `current_month` after the real clock moved to August 2026. All 6 Upload workspace tests and all 9 focused Upload/shell checks pass.
+- Project-local ECC workflows `eval-harness`, `e2e-testing`, and `verification-loop` are installed under `.agents/skills/`; no ECC hooks, MCP servers, global Codex config, or broader profiles were installed.
+- Ruflo `3.32.9` is prepared as an optional project-local Codex MCP with hierarchical coordination, a four-agent limit, initialized local SQLite memory, HNSW search, a project memory graph, safe hooks, local learning, and bounded daemon autostart. Hook auto-execution, scheduled AI workers, cloud MCP, federation, and global config changes remain disabled; Codex stays in `workspace-write` with on-request approvals. A new Codex session is required to load the MCP; see `docs/Ruflo.md`.
+- SQLite Backup API created `data/backups/receipts_before_price_backfill_20260714_190009_160214.db`; `PRAGMA integrity_check` returned `ok`.
+- After the selective Price Model backfill, the user manually changed data in the main database. Its current SHA256 therefore differs from the previously recorded post-backfill hash; this is not an unintended write by parser audit or tests.
+
+## Next recommended stage
+
+Review the production Upload workspace visually. Do not move to another screen automatically; after approval, use the implementation plan to choose the next bounded migration or cross-screen consistency audit.
+
+Manually compare representative unresolved multipack/ambiguous names with available source PDFs or extracted text. Add parser rules only when raw evidence proves a narrow transformation; keep `inferred_piece` experimental.
+
+## Do not run without explicit user approval
+
+- Any full Price Model write-backfill.
+- Any write-backfill including `inferred_piece`, `service_line`, rejected/suspicious or unresolved rows.
+- Any clearing or replacement of high-confidence parser data or manual-review IDs 3544, 3578, 3579 and 3581.
+- Any schema change, receipt import, database recreation, or Obsidian Vault modification.
+- Any parser cleanup of historical rows or parser backfill without a separate audited plan and explicit approval.

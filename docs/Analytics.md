@@ -28,6 +28,10 @@ COALESCE(NULLIF(items.canonical_name, ''), items.name)
 
 Если `canonical_name` заполнен, аналитика считает товар по нему. Иначе используется исходный `items.name`.
 
+Category Engine v2 не меняет формулы аналитики. Графики и KPI продолжают использовать `items.category`. После ручного изменения категории всей группы аналитика автоматически отражает новое значение, потому что обновляется та же колонка `items.category`.
+
+Price & Quantity Model v2 не меняет основные графики расходов: они продолжают использовать `items.price`. Новые поля `normalized_unit_price` и `normalized_price_unit` используются для сравнения цены на `/item/<name>` и `/receipt/<id>`, если для товара есть достаточно истории. Если нормализованных данных не хватает, код возвращается к legacy расчету `price / quantity`.
+
 ## KPI
 
 Реально считаются такие показатели:
@@ -48,6 +52,7 @@ COALESCE(NULLIF(items.canonical_name, ''), items.name)
 - количество покупок товара по магазинам;
 - сумма товара по магазинам;
 - последняя цена товара;
+- последняя нормализованная цена товара, если она доступна;
 - медианная цена товара;
 - отклонение последней цены от средней и медианы;
 - количество товаров в чеке;
@@ -116,16 +121,7 @@ render_template("analytics.html", category_options=get_category_options())
 
 ### Категории для фильтра
 
-`get_category_options()`:
-
-```sql
-SELECT DISTINCT category
-FROM items
-WHERE category IS NOT NULL AND TRIM(category) != ''
-ORDER BY LOWER(category)
-```
-
-Если `прочее` нет в списке, функция добавляет ее.
+`get_category_options()` возвращает canonical list из `app/category_keywords.py:CANONICAL_CATEGORIES`. Старые значения в БД не удаляются автоматически, но dropdown использует единый список.
 
 ### `/analytics/data`
 
@@ -194,14 +190,16 @@ Python:
 
 ### Графики на `/analytics`
 
-`analytics.html` строит через Chart.js:
+`analytics.html` и `app/web/static/analytics.js` строят через Chart.js:
 
-- doughnut `categoryChart` - категории;
+- horizontal bar `categoryChart` - категории;
 - line `monthChart` - расходы по месяцам;
-- bar `topItemsChart` - топ товаров;
+- horizontal bar `topItemsChart` - топ товаров;
 - line `trendChart` - динамика цены выбранного товара.
 
 Ссылки под топом ведут на `/item/<name>`.
+
+Повторная отрисовка после фильтра и смены темы использует единый lifecycle. Перед созданием каждого графика код сверяет локальную ссылку на instance с владельцем canvas из `Chart.getChart(canvas)`, уничтожает оба без двойного destroy и только затем вызывает `new Chart()`. Если конструктор успел зарегистрировать canvas, но завершился ошибкой, leaked instance также уничтожается, а вместо пустой области показывается текстовое состояние ошибки. Пустой dataset остаётся отдельным нормальным empty state и не считается ошибкой рендера.
 
 ### `/analytics/item_trend`
 
@@ -246,8 +244,10 @@ SQL:
 
 ```sql
 SELECT receipts.date, receipts.store, items.quantity, items.price,
-       items.receipt_id, items.id, items.category, items.name,
-       COALESCE(NULLIF(items.canonical_name, ''), items.name) AS product_name
+       items.receipt_id, items.id, items.category, items.category_source, items.name,
+       COALESCE(NULLIF(items.canonical_name, ''), items.name) AS product_name,
+       items.normalized_unit_price, items.normalized_price_unit,
+       items.line_total, items.unit_price, items.package_size, items.package_unit
 FROM items
 JOIN receipts ON items.receipt_id = receipts.id
 WHERE (COALESCE(NULLIF(items.canonical_name, ''), items.name) = ? OR items.name = ?)
@@ -309,6 +309,8 @@ ORDER BY LOWER(items.name)
 Python:
 
 - из каждой покупки считает `unit_price = price / quantity`;
+- если есть минимум 3 значения одной `normalized_price_unit`, использует `normalized_unit_price`;
+- иначе использует legacy `price / quantity`;
 - если точек меньше 3, возвращает `has_enough_data = False`;
 - считает среднюю, медианную, минимум, максимум, последнюю цену;
 - если последняя цена `<= median * 0.9`, статус `Выгодная цена`;
@@ -332,6 +334,8 @@ SQL:
 
 ```sql
 SELECT id, name, quantity, price, category,
+       category_source, normalized_unit_price, normalized_price_unit,
+       line_total, unit_price, package_size, package_unit,
        COALESCE(NULLIF(items.canonical_name, ''), items.name) AS display_name
 FROM items
 WHERE receipt_id = ?
@@ -352,7 +356,8 @@ Python:
 Для каждого товара собирается история:
 
 ```sql
-SELECT quantity, price
+SELECT quantity, price,
+       normalized_unit_price, normalized_price_unit
 FROM items
 WHERE COALESCE(NULLIF(items.canonical_name, ''), items.name) = ?
   AND quantity > 0
@@ -362,9 +367,12 @@ ORDER BY id
 
 Python:
 
-- считает историю `unit_prices`;
+- собирает историю `normalized_unit_price` по `normalized_price_unit`;
+- отдельно держит legacy историю `price / quantity`;
+- если текущая позиция имеет normalized price, сравнивает только внутри той же normalized unit;
+- если normalized price нет, сравнивает legacy `price / quantity`;
 - если у товара нет цены, количества или меньше 3 исторических точек, помечает как `insufficient`;
-- считает текущую цену `price / quantity`;
+- считает текущую цену как `normalized_unit_price` или legacy `price / quantity`;
 - считает медиану;
 - если текущая цена `<= median * 0.9`, позиция `cheap`;
 - если текущая цена `>= median * 1.15`, позиция `expensive`;
@@ -400,4 +408,3 @@ Python:
 - оценка выгодно/дорого/обычно;
 - анализ цен товаров внутри чека;
 - сумма позиций чека для отображения `total_sum`.
-

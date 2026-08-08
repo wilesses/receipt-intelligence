@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% from "_review_components.html" import review_summary, review_card %}
+{% block title %}Проверка категорий{% endblock %}
+{% block body_class %}review-page{% endblock %}
+{% block content %}
+{% set filter_labels = {
+    "all": "Все проблемные",
+    "other": "Категория «прочее»",
+    "conflict": "Конфликт категорий",
+    "no_rule": "Без ручного правила",
+    "new": "Новые и непроверенные"
+} %}
+
+<article class="review-workspace" aria-labelledby="review-title">
+    <header class="page-header review-page-header">
+        <div>
+            <h1 id="review-title">Проверка категорий</h1>
+            <p>Последовательно проверьте товарные группы и подтвердите категорию для следующих покупок.</p>
+        </div>
+        <p class="review-queue-count"><strong>{{ total_count }}</strong> в очереди</p>
+    </header>
+
+    <section class="review-toolbar" aria-labelledby="review-filters-title">
+        <div class="review-toolbar-heading">
+            <h2 id="review-filters-title">Очередь</h2>
+            <p>Найдите группу или сузьте список до нужного типа проблемы.</p>
+        </div>
+        <form method="get" action="{{ url_for('product_review') }}" class="review-filter-grid">
+            <label class="review-search-field">
+                <span>Поиск товара</span>
+                <input class="form-control" type="search" name="q" value="{{ query }}" placeholder="Название товара" autocomplete="off">
+            </label>
+            <label>
+                <span>Требует внимания</span>
+                <select class="form-select" name="filter" autocomplete="off">
+                    <option value="all" {% if problem_filter == "all" %}selected{% endif %}>Все проблемные</option>
+                    <option value="other" {% if problem_filter == "other" %}selected{% endif %}>Прочее</option>
+                    <option value="conflict" {% if problem_filter == "conflict" %}selected{% endif %}>Конфликт категорий</option>
+                    <option value="no_rule" {% if problem_filter == "no_rule" %}selected{% endif %}>Без ручного правила</option>
+                    <option value="new" {% if problem_filter == "new" %}selected{% endif %}>Новые и непроверенные</option>
+                </select>
+            </label>
+            <label>
+                <span>Порядок</span>
+                <select class="form-select" name="sort" autocomplete="off">
+                    <option value="count" {% if sort == "count" %}selected{% endif %}>Чаще покупаемые</option>
+                    <option value="conflicts" {% if sort == "conflicts" %}selected{% endif %}>Больше конфликтов</option>
+                    <option value="recent" {% if sort == "recent" %}selected{% endif %}>Последние покупки</option>
+                    <option value="name" {% if sort == "name" %}selected{% endif %}>По имени</option>
+                </select>
+            </label>
+            <label>
+                <span>Показывать</span>
+                <select class="form-select" name="limit" autocomplete="off">
+                    {% for value in [25, 50, 100, 200] %}
+                        <option value="{{ value }}" {% if limit == value %}selected{% endif %}>{{ value }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+            <button class="btn btn-primary review-filter-submit" type="submit">
+                <i class="bi bi-funnel" aria-hidden="true"></i>
+                Показать
+            </button>
+        </form>
+    </section>
+
+    {{ review_summary(total_count, groups|length, filter_labels.get(problem_filter, "Все проблемные")) }}
+
+    <section class="review-queue" aria-labelledby="review-queue-title">
+        <header class="review-queue-heading">
+            <div>
+                <h2 id="review-queue-title">Требуют решения</h2>
+                <p>Главное действие применяется ко всей товарной группе.</p>
+            </div>
+            <span>Страница {{ page }}</span>
+        </header>
+
+        {% for group in groups %}
+            {{ review_card(group, category_options, query, problem_filter, sort, limit, page) }}
+        {% else %}
+            <section class="review-empty-state" aria-labelledby="review-empty-title">
+                <span class="review-status review-status-complete">Очередь завершена</span>
+                <h2 id="review-empty-title">Все товары проверены</h2>
+                <p>Новые предложения появятся автоматически после следующего анализа.</p>
+            </section>
+        {% endfor %}
+    </section>
+
+    {% if has_prev or has_next %}
+    <nav class="review-pager" aria-label="Страницы очереди">
+        {% if has_prev %}
+            <a class="btn btn-outline-secondary" href="{{ url_for('product_review', q=query, filter=problem_filter, sort=sort, limit=limit, page=page-1) }}">
+                <i class="bi bi-arrow-left" aria-hidden="true"></i>
+                Назад
+            </a>
+        {% endif %}
+        <span>Страница {{ page }}</span>
+        {% if has_next %}
+            <a class="btn btn-outline-secondary" href="{{ url_for('product_review', q=query, filter=problem_filter, sort=sort, limit=limit, page=page+1) }}">
+                Дальше
+                <i class="bi bi-arrow-right" aria-hidden="true"></i>
+            </a>
+        {% endif %}
+    </nav>
+    {% endif %}
+</article>
+{% endblock %}

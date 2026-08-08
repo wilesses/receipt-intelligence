@@ -1,21 +1,43 @@
 import re
 
 
-CATEGORY_OPTIONS = [
+CANONICAL_CATEGORIES = [
+    "служебные расходы",
     "мясо",
-    "молочка",
+    "молочные",
     "овощи",
     "фрукты",
     "выпечка",
-    "сладости",
-    "напитки",
+    "сладости/снеки",
     "чай/кофе",
+    "напитки",
     "бытовое",
+    "корма",
     "детское",
     "аптека",
-    "кот",
+    "быстрое питание",
+    "замороженные продукты",
+    "одежда",
     "прочее",
 ]
+
+CATEGORY_OPTIONS = CANONICAL_CATEGORIES
+
+CATEGORY_ALIASES = {
+    "молочка": "молочные",
+    "сладости": "сладости/снеки",
+    "кот": "корма",
+    "ребенок": "детское",
+}
+
+CATEGORY_SOURCES = {"rule", "manual", "inherited", "fallback"}
+
+SOURCE_LABELS = {
+    "rule": "По правилу",
+    "manual": "Ручная",
+    "inherited": "Унаследована",
+    "fallback": "Прочее",
+}
 
 
 CATEGORY_KEYWORDS = {
@@ -84,6 +106,9 @@ CATEGORY_KEYWORDS = {
     "замороженные продукты": [
         "saldēt", "frozen", "ledus", "hortex", "sald.", "farm frites",
     ],
+    "детское": [],
+    "аптека": [],
+    "одежда": [],
     "прочее": [],
 }
 
@@ -91,8 +116,16 @@ CATEGORY_KEYWORDS = {
 PRIORITY = [
     "служебные расходы", "мясо", "молочные", "овощи", "фрукты", "напитки",
     "выпечка", "сладости/снеки", "чай/кофе", "корма", "быстрое питание",
-    "бытовое", "замороженные продукты",
+    "бытовое", "детское", "аптека", "замороженные продукты", "одежда",
 ]
+
+
+def normalize_category_name(category: str | None) -> str:
+    if not category or not str(category).strip():
+        return "прочее"
+
+    value = str(category).strip().lower()
+    return CATEGORY_ALIASES.get(value, value)
 
 
 def categorize_from_name(name: str) -> str:
@@ -114,6 +147,13 @@ def categorize_from_name(name: str) -> str:
 
     for category in PRIORITY:
         if category in candidates:
-            return category
+                return normalize_category_name(category)
 
     return "прочее"
+
+
+def categorize_with_source(name: str) -> tuple[str, str]:
+    category = categorize_from_name(name)
+    if category == "прочее":
+        return category, "fallback"
+    return category, "rule"

@@ -1,0 +1,68 @@
+# RuFlo runtime configuration for Receipt Tracker v2.
+# Ruflo is pinned in .codex/config.toml; update both files together.
+
+version: "3.0.0"
+
+swarm:
+  topology: hierarchical
+  maxAgents: 4
+  autoScale: false
+  coordinationStrategy: leader
+
+memory:
+  backend: sqlite
+  enableHNSW: true
+  persistPath: .claude-flow/data
+  cacheSize: 100
+  learningBridge:
+    enabled: true
+    sonaMode: balanced
+    confidenceDecayRate: 0.005
+    accessBoostAmount: 0.03
+    consolidationThreshold: 10
+  memoryGraph:
+    enabled: true
+    pageRankDamping: 0.85
+    maxNodes: 5000
+    similarityThreshold: 0.8
+  agentScopes:
+    enabled: true
+    defaultScope: project
+
+neural:
+  enabled: true
+  modelPath: .claude-flow/neural
+
+hooks:
+  enabled: true
+  autoExecute: false
+
+mcp:
+  autoStart: true
+  port: 3000
+
+daemon:
+  autoStart: true
+  maxConcurrent: 2
+  ttlSecs: 43200
+  idleSecs: 1800
+  aiWorkers:
+    enabled: false
+
+learning:
+  enabled: true
+  autoTrain: true
+  patterns:
+    - coordination
+    - optimization
+    - prediction
+  retention:
+    shortTerm: 24h
+    longTerm: 30d
+
+# Ruflo 3.32.9's worker daemon reads these flat compatibility keys.
+"daemon.autoStart": true
+"daemon.maxConcurrent": 2
+"daemon.ttlSecs": 43200
+"daemon.idleSecs": 1800
+"daemon.aiWorkers.enabled": false

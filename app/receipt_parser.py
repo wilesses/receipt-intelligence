@@ -1,5 +1,63 @@
 import re
 from app.category_keywords import CATEGORY_KEYWORDS
+from app.price_model import is_service_line
+
+
+PACKAGE_UNIT_PATTERN = r"(?:kg|ml|gr|g|l|gab|gb|pcs|pc|pieces|piece)"
+SAFE_DECIMAL_SPACE_PATTERN = re.compile(
+    rf"(?<!\d)(\d+),\s+(\d)(?=\s*{PACKAGE_UNIT_PATTERN}\b)",
+    re.IGNORECASE,
+)
+UNSAFE_DECIMAL_SPACE_PATTERN = re.compile(
+    rf"\b\d+,\s+\d{{2,}}\s*{PACKAGE_UNIT_PATTERN}\b",
+    re.IGNORECASE,
+)
+GLUED_PACKAGE_PATTERN = re.compile(
+    rf"[^\W\d_xх×]\d+(?:[.,]\d+)?\s*{PACKAGE_UNIT_PATTERN}\b",
+    re.IGNORECASE,
+)
+
+
+def preprocess_receipt_text(text: str) -> str:
+    normalized = text.replace("—", "-").replace("–", "-")
+    return SAFE_DECIMAL_SPACE_PATTERN.sub(r"\1,\2", normalized)
+
+
+def is_receipt_metadata_line(line: str) -> bool:
+    text = " ".join(line.strip().lower().split())
+    patterns = (
+        r"(?:sia\s+)?(?:rimi|maxima)(?:\s+(?:latvia|latvija))?",
+        r"(?:čeks|ceks)(?:\s+.*)?",
+        r"(?:čeka|ceka)\s*(?:nr\.?\s*)?\d+(?:/\d+)?",
+        r"\d+/\d+",
+        r"(?:kase(?:s)?(?:\s+nr\.?)?|kasieris|rrn|termin[aā]l[ais]*|tirgot[aā]ja)\b.*",
+        r"(?:paldies\s+par\s+pirkumu|saglab[aā]jiet\s+čeku).*",
+    )
+    return any(re.fullmatch(pattern, text, flags=re.IGNORECASE) for pattern in patterns)
+
+
+def parser_quality_issue(name: str) -> str | None:
+    text = " ".join((name or "").strip().split())
+    lowered = text.lower()
+    if not text:
+        return "empty_name"
+    if re.match(r"^(?:čeks|ceks)(?:\s|$)", lowered):
+        return "receipt_header"
+    if is_service_line(text):
+        return "service_line"
+    if re.search(r"(?<!\w)lkg\b", lowered):
+        return "ocr_lkg"
+    if re.search(r"\b\d+(?:[.,]\d+)?\s*m1\b", lowered):
+        return "ocr_m1"
+    if UNSAFE_DECIMAL_SPACE_PATTERN.search(text):
+        return "unsafe_decimal_corruption"
+    if GLUED_PACKAGE_PATTERN.search(text):
+        return "glued_package_token"
+    return None
+
+
+def sanitize_receipt_lines(lines: list[str]) -> list[str]:
+    return ["" if is_receipt_metadata_line(line) else line for line in lines]
 
 
 def parse_money(value: str) -> float:
@@ -18,7 +76,7 @@ def categorize_item(name: str) -> str:
 def parse_rimi_receipt(lines: list[str]) -> dict:
     result = {"store": "RIMI", "date": None, "total": None, "items": []}
 
-    normalized_lines = [line.replace("—", "-").replace("–", "-") for line in lines]
+    normalized_lines = lines
 
     for line in normalized_lines:
         if "laiks" in line.lower():
@@ -44,7 +102,7 @@ def parse_rimi_receipt(lines: list[str]) -> dict:
                 break
 
     qty_line_pattern = re.compile(
-        r"(?P<qty>\d+(?:,\d+)?)\s*(?:gab|kg)\s+X\s+"
+        r"(?P<qty>\d+(?:,\d+)?)\s*(?P<unit>gab|kg)\s+X\s+"
         r"(?P<unit_price>\d+,\d{2})\s*EUR(?:/kg)?"
         r"(?:\s+(?P<line_total>\d+,\d{2}))?",
         re.IGNORECASE,
@@ -78,7 +136,7 @@ def parse_rimi_receipt(lines: list[str]) -> dict:
             cursor -= 1
 
         name = " ".join(name_parts).strip()
-        if not name:
+        if parser_quality_issue(name):
             continue
 
         quantity = parse_money(match.group("qty"))
@@ -99,6 +157,8 @@ def parse_rimi_receipt(lines: list[str]) -> dict:
         result["items"].append({
             "name": name,
             "quantity": quantity,
+            "quantity_unit": match.group("unit").lower(),
+            "unit_price": unit_price,
             "price": price,
             "category": categorize_item(name),
         })
@@ -107,11 +167,17 @@ def parse_rimi_receipt(lines: list[str]) -> dict:
 
 
 def parse_receipt(text: str) -> dict:
-    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    raw_lines = [line.strip() for line in preprocess_receipt_text(text).splitlines() if line.strip()]
+    is_rimi = any("rimi" in line.lower() for line in raw_lines)
+    has_rimi_header = any(
+        re.fullmatch(r"(?:sia\s+)?rimi(?:\s+(?:latvia|latvija))?", line, flags=re.IGNORECASE)
+        for line in raw_lines
+    )
+    lines = sanitize_receipt_lines(raw_lines)
 
-    if any("rimi" in line.lower() for line in lines):
+    if is_rimi:
         rimi_result = parse_rimi_receipt(lines)
-        if rimi_result["items"]:
+        if rimi_result["items"] or has_rimi_header:
             return rimi_result
 
     result = {"store": "MAXIMA", "date": None, "total": None, "items": []}
@@ -156,6 +222,9 @@ def parse_receipt(text: str) -> dict:
                 j -= 1
 
             name = " ".join(name_parts).strip()
+            if parser_quality_issue(name):
+                i += 1
+                continue
 
             # Количество
             qty_match = re.search(r"X\s+([\d,]+)", line)
@@ -180,6 +249,7 @@ def parse_receipt(text: str) -> dict:
                 "name": name,
                 "price": price,
                 "quantity": quantity,
+                "quantity_unit": "unknown",
                 "category": category
             }
             items.append(last_item)

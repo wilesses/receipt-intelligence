@@ -1,0 +1,216 @@
+{% macro product_summary(stats, latest_row, receipt_count, occurrence_count) -%}
+<section class="product-summary" aria-labelledby="product-summary-title">
+    <h2 id="product-summary-title" class="visually-hidden">Краткая сводка товара</h2>
+    <dl>
+        <div class="product-summary-primary">
+            <dt>Последняя цена</dt>
+            <dd>{{ "%.2f"|format(latest_row[3] or 0) }} €</dd>
+        </div>
+        <div>
+            <dt>Средняя цена</dt>
+            <dd>{{ "%.2f"|format(stats[0] or 0) }} €</dd>
+        </div>
+        <div>
+            <dt>Последняя покупка</dt>
+            <dd><time datetime="{{ latest_row[0] }}">{{ latest_row[0] }}</time></dd>
+        </div>
+        <div>
+            <dt>Чеков</dt>
+            <dd>{{ receipt_count }}</dd>
+        </div>
+        <div>
+            <dt>Строк покупок</dt>
+            <dd>{{ occurrence_count }}</dd>
+        </div>
+    </dl>
+</section>
+{%- endmacro %}
+
+{% macro price_story(price_evaluation, latest_price_model, product_name) -%}
+<section class="product-price-story" aria-labelledby="price-story-title">
+    <header class="product-section-header">
+        <div>
+            <h2 id="price-story-title">История цены</h2>
+            <p>Сопоставимая динамика по доступной истории покупок.</p>
+        </div>
+        {% if price_evaluation.has_enough_data %}
+            <span class="product-price-status">
+                {{ price_evaluation.status|replace('🔥 ', '')|replace('⚠️ ', '') }}
+            </span>
+        {% endif %}
+    </header>
+
+    {% if price_evaluation.has_enough_data %}
+        <div class="product-price-evidence">
+            <div class="product-price-current">
+                <span>Последняя сопоставимая цена</span>
+                <strong>{{ "%.2f"|format(price_evaluation.last_price) }} €</strong>
+                <small>{{ price_evaluation.comparison_label }}</small>
+            </div>
+            <dl>
+                <div>
+                    <dt>Обычный уровень</dt>
+                    <dd>{{ "%.2f"|format(price_evaluation.median_price) }} €</dd>
+                </div>
+                <div>
+                    <dt>Изменение к медиане</dt>
+                    <dd>{{ "%+.1f"|format(price_evaluation.median_deviation) }}%</dd>
+                </div>
+                <div>
+                    <dt>Диапазон истории</dt>
+                    <dd>{{ "%.2f"|format(price_evaluation.min_price) }}–{{ "%.2f"|format(price_evaluation.max_price) }} €</dd>
+                </div>
+            </dl>
+        </div>
+    {% else %}
+        <div class="product-price-context">
+            <strong>Для сравнения пока недостаточно покупок</strong>
+            <p>Нужно не менее трёх сопоставимых значений. Доступные покупки остаются в истории ниже.</p>
+        </div>
+    {% endif %}
+
+    <div
+        class="product-trend"
+        data-product-trend
+        data-trend-url="{{ url_for('item_trend', item=product_name) }}"
+    >
+        <div class="product-trend-heading">
+            <strong>Средняя цена покупки по месяцам</strong>
+            <span>Без приведения к размеру упаковки</span>
+        </div>
+        <div class="product-trend-canvas" data-trend-canvas hidden>
+            <canvas
+                id="trendChart"
+                role="img"
+                aria-label="Средняя цена покупки товара по месяцам без приведения к размеру упаковки"
+                aria-describedby="trendDataList"
+            ></canvas>
+        </div>
+        <p class="product-trend-state" data-trend-state aria-live="polite">
+            График появится, когда будет достаточно сопоставимых периодов.
+        </p>
+        <ul id="trendDataList" class="visually-hidden" data-trend-values></ul>
+    </div>
+
+    {% if latest_price_model %}
+        <details class="product-price-method">
+            <summary>Как сопоставляется цена</summary>
+            <dl>
+                <div>
+                    <dt>Цена упаковки</dt>
+                    <dd>
+                        {% if latest_price_model.line_total %}
+                            {{ "%.2f"|format(latest_price_model.line_total) }} €
+                        {% else %}—{% endif %}
+                    </dd>
+                </div>
+                <div>
+                    <dt>Нормализованная цена</dt>
+                    <dd>
+                        {% if latest_price_model.normalized_unit_price %}
+                            {{ "%.2f"|format(latest_price_model.normalized_unit_price) }}
+                            {{ latest_price_model.normalized_price_label }}
+                        {% else %}—{% endif %}
+                    </dd>
+                </div>
+                <div>
+                    <dt>Упаковка</dt>
+                    <dd>
+                        {% if latest_price_model.package_size %}
+                            {{ "%.0f"|format(latest_price_model.package_size) }} {{ latest_price_model.package_unit }}
+                        {% else %}—{% endif %}
+                    </dd>
+                </div>
+                <div>
+                    <dt>Цена за строку</dt>
+                    <dd>
+                        {% if latest_price_model.unit_price %}
+                            {{ "%.2f"|format(latest_price_model.unit_price) }} €
+                        {% else %}—{% endif %}
+                    </dd>
+                </div>
+            </dl>
+        </details>
+    {% endif %}
+</section>
+{%- endmacro %}
+
+{% macro purchase_register(rows, category_options) -%}
+<section class="product-purchases" aria-labelledby="purchase-history-title">
+    <header class="product-section-header product-purchase-header">
+        <div>
+            <h2 id="purchase-history-title">История покупок</h2>
+            <p>Каждая строка связана с исходным чеком.</p>
+        </div>
+        <span>{{ rows|length }} записей</span>
+    </header>
+
+    <div class="purchase-register-heading" aria-hidden="true">
+        <span>Покупка</span>
+        <span>Количество</span>
+        <span>Цена</span>
+        <span>Цена за единицу</span>
+        <span>Источник</span>
+    </div>
+
+    <ol class="purchase-register" aria-label="Покупки товара">
+        {% for row in rows|reverse %}
+            <li class="purchase-record" data-purchase-record>
+                <article aria-labelledby="purchase-{{ row[5] }}-title">
+                    <div class="purchase-identity">
+                        <h3 id="purchase-{{ row[5] }}-title">{{ row[1] or "Магазин не указан" }}</h3>
+                        <time datetime="{{ row[0] }}">{{ row[0] }}</time>
+                    </div>
+                    <dl class="purchase-values">
+                        <div class="purchase-quantity">
+                            <dt>Количество</dt>
+                            <dd>{{ row[2] or "—" }}</dd>
+                        </div>
+                        <div class="purchase-price">
+                            <dt>Цена</dt>
+                            <dd>{{ "%.2f"|format(row[3] or 0) }} €</dd>
+                        </div>
+                        <div class="purchase-normalized">
+                            <dt>Цена за единицу</dt>
+                            <dd>
+                                {% if row[10] and row[11] and row[11] != 'unknown' %}
+                                    {{ "%.2f"|format(row[10]) }}
+                                    {% if row[11] == 'eur_per_l' %}€/L{% elif row[11] == 'eur_per_kg' %}€/kg{% elif row[11] == 'eur_per_piece' %}€/шт.{% else %}{{ row[11] }}{% endif %}
+                                {% else %}—{% endif %}
+                            </dd>
+                        </div>
+                    </dl>
+                    <a
+                        href="{{ url_for('view_receipt', receipt_id=row[4]) }}"
+                        class="purchase-receipt-link"
+                        aria-label="Открыть чек из {{ row[1] or 'магазина' }} за {{ row[0] }}"
+                    >
+                        Открыть чек
+                        <i class="bi bi-arrow-up-right" aria-hidden="true"></i>
+                    </a>
+
+                    <form method="post" action="{{ url_for('update_item_category', item_id=row[5]) }}" class="purchase-category-form">
+                        <label>
+                            <span>Категория</span>
+                            <select name="category" class="form-select category-select">
+                                {% for category in category_options %}
+                                    <option value="{{ category }}" {% if category == (row[6] or 'прочее') %}selected{% endif %}>{{ category }}</option>
+                                {% endfor %}
+                            </select>
+                        </label>
+                        <label>
+                            <span>Применить к</span>
+                            <select name="category_scope" class="form-select category-scope">
+                                <option value="product" selected>Всему товару</option>
+                                <option value="item">Только этой позиции</option>
+                            </select>
+                        </label>
+                        <button class="btn btn-outline-primary" type="submit">Сохранить</button>
+                        <span class="source-badge source-{{ row[7] or 'rule' }}">{{ category_source_label(row[7]) }}</span>
+                    </form>
+                </article>
+            </li>
+        {% endfor %}
+    </ol>
+</section>
+{%- endmacro %}
