@@ -43,13 +43,19 @@ class CategoryEngineTests(unittest.TestCase):
             return conn.execute("SELECT id FROM items ORDER BY id DESC LIMIT 1").fetchone()[0]
 
     def test_normalize_category_name(self):
-        self.assertEqual(normalize_category_name("молочка"), "молочные")
-        self.assertEqual(normalize_category_name("кот"), "корма")
-        self.assertEqual(normalize_category_name(None), "прочее")
+        self.assertEqual(normalize_category_name("молочка"), "молочные продукты и альтернативы")
+        self.assertEqual(normalize_category_name("кот"), "товары для животных")
+        self.assertEqual(normalize_category_name(None), "прочее / требует решения")
 
     def test_categorize_with_source(self):
-        self.assertEqual(categorize_with_source("piens 2%"), ("молочные", "rule"))
-        self.assertEqual(categorize_with_source("xyz unknown thing"), ("прочее", "fallback"))
+        self.assertEqual(
+            categorize_with_source("piens 2%"),
+            ("молочные продукты и альтернативы", "rule"),
+        )
+        self.assertEqual(
+            categorize_with_source("xyz unknown thing"),
+            ("прочее / требует решения", "fallback"),
+        )
 
     def test_manual_rule_update_and_inherited_import(self):
         with db.get_connection() as conn:
@@ -70,8 +76,56 @@ class CategoryEngineTests(unittest.TestCase):
             row = conn.execute("SELECT category, category_source FROM items").fetchone()
             rule = get_category_rule(conn, key)
 
-        self.assertEqual(rule["category"], "сладости/снеки")
-        self.assertEqual(row, ("сладости/снеки", "inherited"))
+        self.assertEqual(rule["category"], "снеки и сладости")
+        self.assertEqual(row, ("снеки и сладости", "inherited"))
+
+    def test_exact_rule_remains_authoritative_over_classifier_disagreement(self):
+        name = "Alus TEST 5,0% 0,5L"
+        key = normalize_product_name(name)
+        with db.get_connection() as conn:
+            upsert_category_rule(conn, key, "безалкогольные напитки")
+            conn.commit()
+
+        self.assertEqual(categorize_with_source(name)[0], "алкоголь")
+        self.assertTrue(db.add_receipt_with_items(
+            "2026-01-03",
+            "TEST",
+            1,
+            "rule-over-classifier",
+            [{"name": name, "quantity": 1, "price": 1}],
+        ))
+
+        with db.get_connection() as conn:
+            row = conn.execute(
+                "SELECT category, category_source FROM items WHERE name = ?",
+                (name,),
+            ).fetchone()
+
+        self.assertEqual(row, ("безалкогольные напитки", "inherited"))
+
+    def test_unseen_import_uses_classifier_and_fails_closed(self):
+        items = [
+            {"name": "Olas brīvos apstākļos 10gab", "quantity": 1, "price": 2},
+            {"name": "Tomātu pasta TEST 500g", "quantity": 1, "price": 2},
+            {"name": "Instant nūdeles TEST 90g", "quantity": 1, "price": 2},
+            {"name": "Santa Maria 250g", "quantity": 1, "price": 2},
+        ]
+
+        self.assertTrue(db.add_receipt_with_items(
+            "2026-01-04", "TEST", 8, "unseen-classifier", items
+        ))
+
+        with db.get_connection() as conn:
+            rows = conn.execute(
+                "SELECT name, category, category_source FROM items ORDER BY id"
+            ).fetchall()
+
+        self.assertEqual(rows, [
+            ("Olas brīvos apstākļos 10gab", "яйца", "rule"),
+            ("Tomātu pasta TEST 500g", "соусы, приправы и консервы", "rule"),
+            ("Instant nūdeles TEST 90g", "готовая еда и быстрое приготовление", "rule"),
+            ("Santa Maria 250g", "прочее / требует решения", "fallback"),
+        ])
 
     def test_scope_item_updates_one_without_rule(self):
         receipt_id = self.add_receipt()
@@ -91,7 +145,7 @@ class CategoryEngineTests(unittest.TestCase):
             rows = conn.execute("SELECT category, category_source FROM items ORDER BY id").fetchall()
             rules = conn.execute("SELECT COUNT(*) FROM product_category_rules").fetchone()[0]
 
-        self.assertEqual(rows[0], ("напитки", "manual"))
+        self.assertEqual(rows[0], ("безалкогольные напитки", "manual"))
         self.assertEqual(rows[1], ("прочее", "fallback"))
         self.assertEqual(rules, 0)
 
@@ -114,10 +168,28 @@ class CategoryEngineTests(unittest.TestCase):
             rows = conn.execute("SELECT name, category, category_source FROM items ORDER BY id").fetchall()
             rules = conn.execute("SELECT COUNT(*) FROM product_category_rules").fetchone()[0]
 
-        self.assertEqual(rows[0][1:], ("напитки", "manual"))
-        self.assertEqual(rows[1][1:], ("напитки", "manual"))
+        self.assertEqual(rows[0][1:], ("безалкогольные напитки", "manual"))
+        self.assertEqual(rows[1][1:], ("безалкогольные напитки", "manual"))
         self.assertEqual(rows[2][1:], ("прочее", "fallback"))
         self.assertEqual(rules, 1)
+
+    def test_category_post_rejects_noncanonical_value(self):
+        receipt_id = self.add_receipt()
+        item_id = self.add_item(receipt_id, "Invalid category product")
+        client = create_app().test_client()
+
+        response = client.post(
+            f"/item/{item_id}/category",
+            data={"category": "arbitrary category", "category_scope": "item"},
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        with db.get_connection() as conn:
+            self.assertEqual(
+                conn.execute("SELECT category, category_source FROM items WHERE id = ?", (item_id,)).fetchone(),
+                ("прочее", "fallback"),
+            )
 
     def test_review_route_filters(self):
         receipt_id = self.add_receipt()

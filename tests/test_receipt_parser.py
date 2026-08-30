@@ -9,7 +9,7 @@ from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
-from app.receipt_parser import parse_receipt
+from app.receipt_parser import categorize_item, parse_receipt
 from app.price_model import derive_price_data
 
 
@@ -38,6 +38,12 @@ def maxima_receipt(name_lines, price_line="1,99 X 1 gab. 1,99 A", extra_lines=No
 
 
 class ReceiptParserRegressionTests(unittest.TestCase):
+    def test_parser_category_delegates_to_shared_semantic_classifier(self):
+        self.assertEqual(
+            categorize_item("Kruasāns ar šokolādes pildījumu 60g"),
+            "хлеб и выпечка",
+        )
+
     def test_receipt_374_golden_parses_and_derives_exact_paid_semantics(self):
         fixture = Path(__file__).parent / "fixtures" / "receipt_374_maxima.txt"
         receipt = parse_receipt(fixture.read_text(encoding="utf-8"))

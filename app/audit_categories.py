@@ -3,7 +3,11 @@ import json
 import sys
 from collections import Counter
 
-from app.category_keywords import CANONICAL_CATEGORIES, normalize_category_name
+from app.category_keywords import (
+    CANONICAL_CATEGORIES,
+    UNRESOLVED_CATEGORY,
+    category_for_reporting,
+)
 from app.category_rules import get_product_key
 from app.db import get_connection
 
@@ -24,7 +28,7 @@ def audit_categories() -> dict:
     unknown_categories = sorted({
         category
         for category in category_counts
-        if category and normalize_category_name(category) not in canonical
+        if category and category_for_reporting(category) not in canonical
     })
 
     groups = {}
@@ -33,7 +37,7 @@ def audit_categories() -> dict:
     for _, name, normalized_name, canonical_name, category, category_source in rows:
         key = get_product_key(name or "", normalized_name, canonical_name)
         group = groups.setdefault(key, set())
-        group.add(normalize_category_name(category))
+        group.add(category_for_reporting(category))
         if key in rule_keys:
             covered_by_rules += 1
 
@@ -46,7 +50,11 @@ def audit_categories() -> dict:
         "empty_categories": empty_categories,
         "unknown_categories": unknown_categories,
         "conflict_groups": conflict_groups,
-        "other_count": category_counts.get("прочее", 0),
+        "other_count": sum(
+            count
+            for category, count in category_counts.items()
+            if category_for_reporting(category) == UNRESOLVED_CATEGORY
+        ),
         "manual_rules": len(rule_keys),
         "rows_covered_by_manual_rules": covered_by_rules,
     }

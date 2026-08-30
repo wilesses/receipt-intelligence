@@ -1,5 +1,5 @@
 import re
-from app.category_keywords import CATEGORY_KEYWORDS
+from app.category_keywords import categorize_from_name
 from app.price_model import is_service_line
 
 
@@ -65,12 +65,7 @@ def parse_money(value: str) -> float:
 
 
 def categorize_item(name: str) -> str:
-    name_lower = name.lower()
-    for category, keywords in CATEGORY_KEYWORDS.items():
-        for keyword in keywords:
-            if keyword.lower() in name_lower:
-                return category
-    return "прочее"
+    return categorize_from_name(name)
 
 
 def parse_rimi_receipt(lines: list[str]) -> dict:

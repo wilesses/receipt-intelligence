@@ -6,6 +6,9 @@ QUANTITY_UNITS = {"piece", "kg", "g", "l", "ml", "unknown"}
 PACKAGE_UNITS = {"piece", "g", "ml", "unknown"}
 NORMALIZED_UNITS = {"eur_per_l", "eur_per_kg", "eur_per_piece", "unknown"}
 MAX_REASONABLE_NORMALIZED_PRICE = 10000
+MANUAL_CORRECTION_SOURCE = "manual_correction"
+# Policy confidence: reviewed structured evidence plus all model guards.
+MANUAL_CORRECTION_CONFIDENCE = 0.85
 
 
 def is_service_line(name: str | None) -> bool:
@@ -268,6 +271,16 @@ def derive_price_data(
 
     supplied_size, supplied_unit = _provided_package(package_size, package_unit)
     inferred_size, inferred_unit, package_warnings = extract_package_size(name, normalized_name)
+    manually_resolved_measurement = source == MANUAL_CORRECTION_SOURCE and (
+        supplied_size is not None or unit in {"kg", "g", "l", "ml"}
+    )
+    if manually_resolved_measurement:
+        package_warnings = [warning for warning in package_warnings if warning not in {
+            "age_package_ambiguous",
+            "ambiguous_package_size",
+            "invalid_package_size",
+            "weighted_measurement_ambiguous",
+        }]
     warnings.extend(package_warnings)
     final_package_size = supplied_size if supplied_size is not None else inferred_size
     final_package_unit = supplied_unit if supplied_unit is not None else inferred_unit
@@ -307,6 +320,7 @@ def derive_price_data(
                 "weighted_inference": 0.75,
                 "package_name": 0.85,
                 "inferred_piece": 0.70,
+                MANUAL_CORRECTION_SOURCE: MANUAL_CORRECTION_CONFIDENCE,
             }.get(source, 0.85 if final_package_size else 0.70)
             result_source = "parser" if source == "parser" else source
         elif (
