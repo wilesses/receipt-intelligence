@@ -1,0 +1,12 @@
+{% macro icon(name, class_name="") -%}
+<svg
+    class="app-icon{% if class_name %} {{ class_name }}{% endif %}"
+    width="20"
+    height="20"
+    viewBox="0 0 24 24"
+    aria-hidden="true"
+    focusable="false"
+>
+    <use href="{{ url_for('static', filename='icons/lucide.svg') }}#{{ name }}"></use>
+</svg>
+{%- endmacro %}

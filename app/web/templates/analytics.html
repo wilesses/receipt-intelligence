@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_icons.html" import icon %}
 {% block title %}Аналитика{% endblock %}
 {% block body_class %}analytics-page{% endblock %}
 {% block content %}
@@ -40,7 +41,7 @@
                 <select class="form-select" id="categoryFilter" name="category" autocomplete="off">
                     <option value="" {% if not request.args.get('category') %}selected{% endif %}>Все категории</option>
                     {% for category in category_options %}
-                    <option value="{{ category }}" {% if request.args.get('category') == category %}selected{% endif %}>{{ category }}</option>
+                    <option value="{{ category }}" {% if selected_category == category %}selected{% endif %}>{{ category }}</option>
                     {% endfor %}
                 </select>
             </label>
@@ -49,7 +50,7 @@
                 <input type="search" id="itemFilter" name="item" class="form-control" value="{{ request.args.get('item', '') }}" placeholder="Название товара" autocomplete="off">
             </label>
             <button class="btn btn-primary analytics-apply" id="applyFilters" type="submit">
-                <i class="bi bi-funnel" aria-hidden="true"></i>
+                {{ icon("sliders-horizontal") }}
                 Применить
             </button>
         </form>
@@ -146,24 +147,43 @@
         <header class="analytics-section-header">
             <div>
                 <span>Локальное исследование</span>
-                <h2 id="price-trend-title">Как менялась цена конкретного товара?</h2>
-                <p>Выберите товар, чтобы увидеть существующую помесячную историю цены за единицу.</p>
+                <h2 id="price-trend-title">Исследовать конкретный товар</h2>
+                <p>Найдите товар, чтобы посмотреть его историю цен и подробный профиль.</p>
             </div>
         </header>
         <form class="analytics-trend-toolbar" id="analyticsTrendForm">
             <label for="itemTrendInput">
                 <span>Товар</span>
-                <input type="search" id="itemTrendInput" name="trend_item" class="form-control" placeholder="Название товара" autocomplete="off">
+                <input
+                    type="search"
+                    id="itemTrendInput"
+                    name="trend_item"
+                    class="form-control"
+                    placeholder="Начните вводить название"
+                    autocomplete="off"
+                    list="itemTrendOptions"
+                    aria-describedby="researchSelectionStatus"
+                >
+                <datalist id="itemTrendOptions"></datalist>
             </label>
-            <button class="btn btn-outline-primary" type="submit">
-                <i class="bi bi-graph-up" aria-hidden="true"></i>
-                Показать динамику
-            </button>
+            <div class="analytics-trend-actions">
+                <button id="researchTrendButton" class="btn btn-outline-primary" type="submit" disabled>
+                    {{ icon("chart-line") }}
+                    Показать динамику
+                </button>
+                <a id="researchProfileLink" class="btn btn-outline-secondary" hidden>
+                    {{ icon("arrow-up-right") }}
+                    Открыть профиль товара
+                </a>
+            </div>
         </form>
+        <p id="researchSelectionStatus" class="analytics-research-selection" aria-live="polite">
+            Введите название и выберите товар из найденных вариантов.
+        </p>
         <div class="analytics-chart-frame analytics-chart-frame-trend" data-chart-frame="trend" data-state="empty">
-            <canvas id="trendChart" role="img" aria-label="Динамика цены выбранного товара" hidden></canvas>
+            <canvas id="trendChart" role="img" aria-label="Динамика сопоставимой цены выбранного товара" hidden></canvas>
             <p id="trendMsg" class="analytics-chart-empty analytics-trend-empty" aria-live="polite">
-                Выберите товар — здесь появится его помесячная динамика цены за единицу.
+                Выберите товар — здесь появится медианная нормализованная цена по месяцам.
             </p>
         </div>
     </section>

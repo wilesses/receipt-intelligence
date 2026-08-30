@@ -8,9 +8,11 @@ import re
 from statistics import median
 from urllib.parse import quote, urlencode
 
-from app.category_keywords import normalize_category_name
+from app.category_keywords import UNRESOLVED_CATEGORY, category_for_reporting
 from app.category_rules import get_product_key
 from app.db import get_connection
+from app.price_deviation import evaluate_price_deviation
+from app.product_identity import effective_product_identity_sql
 from app.product_matcher import find_similar_products
 
 
@@ -43,8 +45,8 @@ MONTH_NAMES_RU = (
 )
 
 SUPPORTED_PRICE_UNITS = set(PRICE_UNIT_LABELS)
+PRODUCT_NAME_EXPR = effective_product_identity_sql("items")
 
-STORY_PRICE_CONFIDENCE = 0.85
 STORY_MAX_EVIDENCE = 3
 STORY_MAX_TIMELINE_EVENTS = 60
 MONTH_KEY_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
@@ -224,7 +226,7 @@ def _category_totals(conn, start: date | None, end: date) -> dict[str, float]:
     ).fetchall()
     totals = {}
     for category, amount in rows:
-        normalized = normalize_category_name(category)
+        normalized = category_for_reporting(category)
         totals[normalized] = totals.get(normalized, 0.0) + float(amount or 0)
     return totals
 
@@ -480,7 +482,7 @@ def _receipt_rows(conn, window: PeriodWindow, *, limit=None, store_search="") ->
                     "name": row[1],
                     "quantity": float(row[2] or 0),
                     "price": round(float(row[3] or 0), 2),
-                    "category": row[4] or "прочее",
+                    "category": category_for_reporting(row[4]),
                     "category_source": row[5] or "rule",
                     "price_parse_confidence": row[6],
                     "has_price_warning": (
@@ -546,7 +548,7 @@ def _product_price_context(conn, product_key: str, month_start: date, month_end:
         SELECT items.id, receipts.date, items.normalized_unit_price, items.normalized_price_unit
         FROM items
         JOIN receipts ON receipts.id = items.receipt_id
-        WHERE COALESCE(NULLIF(items.normalized_name, ''), NULLIF(items.canonical_name, ''), items.name) = ?
+        WHERE {PRODUCT_NAME_EXPR} = ?
           AND items.normalized_unit_price IS NOT NULL
           AND items.normalized_unit_price > 0
           AND items.normalized_price_unit IN ({placeholders})
@@ -598,10 +600,10 @@ def _product_price_context(conn, product_key: str, month_start: date, month_end:
 
 def _top_month_products(conn, month_start: date, month_end: date) -> list[dict]:
     rows = conn.execute(
-        """
+        f"""
         SELECT
-            COALESCE(NULLIF(items.normalized_name, ''), NULLIF(items.canonical_name, ''), items.name) AS product_key,
-            COALESCE(NULLIF(items.normalized_name, ''), NULLIF(items.canonical_name, ''), items.name) AS display_name,
+            {PRODUCT_NAME_EXPR} AS product_key,
+            {PRODUCT_NAME_EXPR} AS display_name,
             ROUND(COALESCE(SUM(COALESCE(items.line_total, items.price, 0)), 0), 2) AS spend,
             COUNT(*) AS purchase_count
         FROM items
@@ -743,13 +745,13 @@ def _story_category_data(conn, window: PeriodWindow) -> dict:
         other = 0.0
         for category, receipt_id, amount in rows:
             value = max(0.0, float(amount or 0))
-            normalized = normalize_category_name(category)
+            normalized = category_for_reporting(category)
             totals[normalized] = totals.get(normalized, 0.0) + value
             receipt_amounts.setdefault(normalized, {})[int(receipt_id)] = (
                 receipt_amounts.setdefault(normalized, {}).get(int(receipt_id), 0.0) + value
             )
             covered += value
-            if normalized == "прочее":
+            if normalized == UNRESOLVED_CATEGORY:
                 other += value
         return {
             "totals": totals,
@@ -773,55 +775,77 @@ def _story_item_candidates(conn, window: PeriodWindow, summary: dict, comparison
     where, params = _range_sql(window.start, window.end)
     current_rows = conn.execute(
         f"""
-        SELECT items.id, receipts.id, receipts.date, receipts.store, items.name,
-               COALESCE(NULLIF(items.normalized_name, ''), NULLIF(items.canonical_name, ''), items.name),
+        SELECT items.id, items.receipt_id, receipts.date, receipts.store, items.name,
+               {PRODUCT_NAME_EXPR},
+               {PRODUCT_NAME_EXPR},
+               items.canonical_name, items.normalized_name,
                COALESCE(items.line_total, items.price, 0),
+               items.quantity, items.price, items.line_total, items.unit_price,
+               items.quantity_unit, items.package_size, items.package_unit,
                items.normalized_unit_price, items.normalized_price_unit,
-               items.price_parse_confidence, items.category
+               items.price_parse_source, items.price_parse_confidence, items.category
         FROM items
         JOIN receipts ON receipts.id = items.receipt_id
         WHERE {where}
+        ORDER BY receipts.date, items.receipt_id, items.id
         """,
         params,
     ).fetchall()
     history_start = window.start - timedelta(days=180)
     history_rows = conn.execute(
-        """
-        SELECT receipts.date,
-               COALESCE(NULLIF(normalized_name, ''), NULLIF(canonical_name, ''), name),
-               COALESCE(line_total, price, 0), normalized_unit_price,
-               normalized_price_unit, price_parse_confidence, items.category
+        f"""
+        SELECT items.id, items.receipt_id, receipts.date, receipts.store, items.name,
+               {PRODUCT_NAME_EXPR},
+               {PRODUCT_NAME_EXPR},
+               items.canonical_name, items.normalized_name,
+               COALESCE(items.line_total, items.price, 0),
+               items.quantity, items.price, items.line_total, items.unit_price,
+               items.quantity_unit, items.package_size, items.package_unit,
+               items.normalized_unit_price, items.normalized_price_unit,
+               items.price_parse_source, items.price_parse_confidence, items.category
         FROM items
         JOIN receipts ON receipts.id = items.receipt_id
         WHERE receipts.date >= ? AND receipts.date < ? AND date(receipts.date) IS NOT NULL
+        ORDER BY receipts.date, items.receipt_id, items.id
         """,
         (history_start.isoformat(), window.start.isoformat()),
     ).fetchall()
+    columns = (
+        "id", "receipt_id", "date", "store", "name", "story_key",
+        "effective_name", "canonical_name", "normalized_name", "amount",
+        "quantity", "price", "line_total", "unit_price", "quantity_unit",
+        "package_size", "package_unit", "normalized_unit_price",
+        "normalized_price_unit", "price_parse_source", "price_parse_confidence",
+        "category",
+    )
+    current_rows = [dict(zip(columns, row)) for row in current_rows]
+    history_rows = [dict(zip(columns, row)) for row in history_rows]
     history_amounts = {}
-    history_prices = {}
-    categories_by_key = {}
+    categories_by_price_key = {}
+    price_rows_by_key = {}
     unusual_history_start = window.start - timedelta(days=90)
-    for receipt_date, key, amount, normalized_price, unit, confidence, category in history_rows:
-        if key and receipt_date >= unusual_history_start.isoformat() and float(amount or 0) > 0:
-            history_amounts.setdefault(key, []).append(float(amount))
-        if key:
-            categories_by_key.setdefault(key, set()).add(normalize_category_name(category))
+    for row in [*history_rows, *current_rows]:
+        price_key = row["effective_name"]
+        if price_key:
+            price_rows_by_key.setdefault(price_key, []).append(row)
+            categories_by_price_key.setdefault(price_key, set()).add(
+                category_for_reporting(row["category"])
+            )
+    for row in history_rows:
+        key = row["story_key"]
         if (
-            key and unit in SUPPORTED_PRICE_UNITS and normalized_price is not None
-            and float(normalized_price) > 0 and confidence is not None
-            and float(confidence) >= STORY_PRICE_CONFIDENCE
+            key
+            and row["date"] >= unusual_history_start.isoformat()
+            and float(row["amount"] or 0) > 0
         ):
-            history_prices.setdefault((key, unit), []).append(float(normalized_price))
+            history_amounts.setdefault(key, []).append(float(row["amount"]))
 
     absolute_delta = abs((comparison or {}).get("absolute_delta") or 0)
     candidates = []
     for row in current_rows:
-        key, category = row[5], row[10]
-        if key:
-            categories_by_key.setdefault(key, set()).add(normalize_category_name(category))
-    for row in current_rows:
-        item_id, receipt_id, receipt_date, store, name, key, amount, unit_price, unit, confidence, category = row
-        value = max(0.0, float(amount or 0))
+        key = row["story_key"]
+        price_key = row["effective_name"]
+        value = max(0.0, float(row["amount"] or 0))
         prior_amounts = history_amounts.get(key, [])
         unusual = (
             len(prior_amounts) >= 5
@@ -831,27 +855,28 @@ def _story_item_candidates(conn, window: PeriodWindow, summary: dict, comparison
                 or (absolute_delta > 0 and value >= absolute_delta * 0.5)
             )
         )
-        price_history = history_prices.get((key, unit), [])
-        price_change = None
-        price_effect = 0.0
-        if (
-            unit in SUPPORTED_PRICE_UNITS and unit_price is not None and float(unit_price) > 0
-            and confidence is not None and float(confidence) >= STORY_PRICE_CONFIDENCE
-            and len(price_history) >= 2
-        ):
-            baseline = median(price_history)
-            price_change = (float(unit_price) - baseline) / baseline * 100 if baseline else None
-            price_effect = abs(float(unit_price) - baseline)
+        price_result = evaluate_price_deviation(
+            row,
+            price_rows_by_key.get(price_key, []),
+        )
+        price_change = price_result["deviation_percent"]
+        price_effect = (
+            abs(price_result["current_normalized_price"] - price_result["historical_median"])
+            if price_result["historical_median"] is not None
+            else 0.0
+        )
         candidates.append({
-            "item_id": int(item_id), "receipt_id": int(receipt_id), "date": receipt_date,
-            "store": store, "name": name or key, "key": key, "amount": round(value, 2),
+            "item_id": int(row["id"]), "receipt_id": int(row["receipt_id"]), "date": row["date"],
+            "store": row["store"], "name": row["name"] or price_key,
+            "key": key, "price_key": price_key, "amount": round(value, 2),
             "unusual": unusual, "history_count": len(prior_amounts),
-            "unit_price": round(float(unit_price), 4) if unit_price is not None else None,
-            "unit": unit, "confidence": float(confidence) if confidence is not None else None,
-            "price_history_count": len(price_history),
-            "price_change_percent": round(price_change, 1) if price_change is not None else None,
+            "unit_price": price_result["current_normalized_price"],
+            "unit": price_result["normalized_price_unit"],
+            "price_status": price_result["status"],
+            "price_history_count": price_result["eligible_prior_observation_count"],
+            "price_change_percent": price_change,
             "price_effect": round(price_effect, 2),
-            "category_conflict": len(categories_by_key.get(key, set())) > 1,
+            "category_conflict": len(categories_by_price_key.get(price_key, set())) > 1,
         })
     return candidates
 
@@ -925,7 +950,7 @@ def _story_insight(
         for category in current["totals"].keys() | previous["totals"].keys():
             category_delta = current["totals"].get(category, 0) - previous["totals"].get(category, 0)
             if (
-                category != "прочее" and category_delta and total_delta
+                category != UNRESOLVED_CATEGORY and category_delta and total_delta
                 and (category_delta > 0) == (total_delta > 0)
                 and abs(category_delta) >= max(10.0, abs(total_delta) * 0.40)
             ):
@@ -983,8 +1008,7 @@ def _story_insight(
         change = item["price_change_percent"]
         if (
             change is not None and abs(change) >= 15
-            and item["price_history_count"] >= 2
-            and item["confidence"] is not None and item["confidence"] >= STORY_PRICE_CONFIDENCE
+            and item["price_status"] in {"CHEAPER_THAN_USUAL", "MORE_EXPENSIVE_THAN_USUAL"}
             and not item["category_conflict"]
             and (
                 (summary["spend"] > 0 and item["amount"] >= summary["spend"] * 0.10)
@@ -995,18 +1019,18 @@ def _story_insight(
     if price_candidates:
         winner = sorted(
             price_candidates,
-            key=lambda item: (-abs(item["price_change_percent"]), -item["amount"], item["key"]),
+            key=lambda item: (-abs(item["price_change_percent"]), -item["amount"], item["price_key"]),
         )[0]
         receipt = receipt_by_id[winner["receipt_id"]]
         direction = "выше" if winner["price_change_percent"] > 0 else "ниже"
         unit_label = PRICE_UNIT_LABELS.get(winner["unit"], winner["unit"])
         return {
-            "type": "normalized_price", "priority": 4, "subject_key": f"{winner['key']}:{winner['unit']}",
+            "type": "normalized_price", "priority": 4, "subject_key": f"{winner['price_key']}:{winner['unit']}",
             "title": f"Нормализованная цена «{winner['name']}» заметно отличается от недавней истории.",
             "metric_confirmation": f"На {abs(winner['price_change_percent']):.1f}% {direction} медианы сопоставимых наблюдений · {unit_label}.",
             "metric_value": winner["price_change_percent"], "metric_unit": "percent",
             "evidence_events": [receipt],
-            "destination_link": f"/item/{quote(winner['key'], safe='')}",
+            "destination_link": f"/item/{quote(winner['price_key'], safe='')}",
             "destination_label": "Открыть историю товара",
         }
 
@@ -1134,9 +1158,9 @@ def _product_group_health(conn) -> tuple[int, int]:
     groups = {}
     for name, normalized_name, canonical_name, category in rows:
         key = get_product_key(name or "", normalized_name, canonical_name)
-        groups.setdefault(key, set()).add(normalize_category_name(category))
+        groups.setdefault(key, set()).add(category_for_reporting(category))
     conflicts = sum(len(categories) > 1 for categories in groups.values())
-    unresolved = sum("прочее" in categories for categories in groups.values())
+    unresolved = sum(UNRESOLVED_CATEGORY in categories for categories in groups.values())
     return conflicts, unresolved
 
 
@@ -1197,7 +1221,7 @@ def _operations(conn) -> tuple[list[dict], dict]:
         {
             "key": "uncategorized", "priority": 5, "count": unresolved,
             "severity": "low", "severity_label": "Низкий", "title": "Требуют категоризации",
-            "explanation": "Группы товаров остаются в категории «прочее».",
+            "explanation": "Группы товаров остаются в категории «прочее / требует решения».",
             "href": "/products/review?filter=other", "action": "Назначить",
         },
     ])

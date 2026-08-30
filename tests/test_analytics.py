@@ -160,6 +160,30 @@ class AnalyticsInsightTests(unittest.TestCase):
         self.assertEqual(result["insight_summary"]["receipt_count"], 1)
         self.assertEqual(result["insight_summary"]["lines"][2]["share_percent"], 100.0)
 
+    def test_legacy_review_rows_join_unresolved_reporting_bucket(self):
+        self.add_receipt(
+            "2026-05-10",
+            "RIMI",
+            [{"name": "Legacy review", "price": 5, "category": "мясо"}],
+        )
+        self.add_receipt(
+            "2026-05-11",
+            "MAXIMA",
+            [{"name": "Approved egg", "price": 7, "category": "яйца"}],
+        )
+
+        result = get_analytics_data()
+        self.assertEqual(
+            dict(zip(result["categories"]["labels"], result["categories"]["values"])),
+            {"яйца": 7.0, "прочее / требует решения": 5.0},
+        )
+        unresolved = get_analytics_data(category="прочее / требует решения")
+        self.assertEqual(unresolved["total_spent"], 5.0)
+        self.assertEqual(
+            unresolved["categories"],
+            {"labels": ["прочее / требует решения"], "values": [5.0]},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

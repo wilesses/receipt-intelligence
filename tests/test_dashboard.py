@@ -48,9 +48,10 @@ class DashboardTests(unittest.TestCase):
                     """
                     INSERT INTO items (
                         receipt_id, name, normalized_name, quantity, price, line_total,
-                        normalized_unit_price, normalized_price_unit,
+                        unit_price, quantity_unit, package_size, package_unit,
+                        normalized_unit_price, normalized_price_unit, price_parse_source,
                         price_parse_confidence, category, category_source
-                    ) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, 1, ?, ?, ?, 'piece', 1, 'piece', ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         receipt_id,
@@ -58,8 +59,10 @@ class DashboardTests(unittest.TestCase):
                         item.get("normalized_name", f"item {index}"),
                         item.get("price", total),
                         item.get("line_total"),
+                        item.get("line_total"),
                         item.get("normalized_unit_price"),
                         item.get("normalized_price_unit"),
+                        item.get("source", "package_name"),
                         item.get("confidence"),
                         item.get("category", "прочее"),
                         item.get("category_source", "fallback"),
@@ -291,7 +294,7 @@ class DashboardTests(unittest.TestCase):
                 "absolute_delta": 50.0,
                 "percentage_delta": 100.0,
             },
-            [{"category": "молочные", "current": 60.0, "previous": 10.0, "delta": 50.0}],
+            [{"category": "молочные продукты и альтернативы", "current": 60.0, "previous": 10.0, "delta": 50.0}],
             [
                 {
                     "key": "category_conflicts", "severity": "critical", "count": 2,
@@ -317,7 +320,7 @@ class DashboardTests(unittest.TestCase):
             self.assertTrue(finding["evidence_summary"])
             self.assertTrue(finding["decision"])
             self.assertTrue(finding["links"][0]["href"].startswith("/"))
-        self.assertIn("category=%D0%BC%D0%BE%D0%BB%D0%BE%D1%87%D0%BD%D1%8B%D0%B5", findings[0]["links"][0]["href"])
+        self.assertIn("category=%D0%BC%D0%BE%D0%BB%D0%BE%D1%87%D0%BD%D1%8B%D0%B5+%D0%BF%D1%80%D0%BE%D0%B4%D1%83%D0%BA%D1%82%D1%8B+%D0%B8+%D0%B0%D0%BB%D1%8C%D1%82%D0%B5%D1%80%D0%BD%D0%B0%D1%82%D0%B8%D0%B2%D1%8B", findings[0]["links"][0]["href"])
         self.assertEqual(findings[2]["links"][0]["href"], "/products/review?filter=conflict&sort=conflicts")
 
     def test_empty_database_is_safe(self):
@@ -422,11 +425,11 @@ class DashboardTests(unittest.TestCase):
         for day in range(1, 4):
             self.add_receipt(
                 f"2026-06-{day:02d}", 50, f"negative-prev-{day}",
-                items=({"name": "Clothes", "price": 50, "line_total": 50, "category": "одежда"},),
+                items=({"name": "Clothes", "price": 50, "line_total": 50, "category": "бытовое и личный уход"},),
             )
             self.add_receipt(
                 f"2026-07-{day:02d}", 20, f"negative-curr-{day}",
-                items=({"name": "Clothes", "price": 20, "line_total": 20, "category": "одежда"},),
+                items=({"name": "Clothes", "price": 20, "line_total": 20, "category": "бытовое и личный уход"},),
             )
         insight = service.get_dashboard_data("current_month", as_of=date(2026, 7, 10))["month_story"]["insight"]
         self.assertEqual(insight["type"], "category_impact")
@@ -435,7 +438,7 @@ class DashboardTests(unittest.TestCase):
 
     def test_month_story_price_requires_confidence_and_comparable_history(self):
         service = self.service()
-        for day in (1, 5):
+        for day in (1, 3, 5):
             self.add_receipt(
                 f"2026-06-{day:02d}", 10, f"price-prev-{day}",
                 items=({"name": "Milk", "normalized_name": "milk", "price": 10, "line_total": 10,
@@ -454,6 +457,30 @@ class DashboardTests(unittest.TestCase):
             conn.commit()
         high = service.get_dashboard_data("current_month", as_of=date(2026, 7, 10))["month_story"]["insight"]
         self.assertEqual(high["type"], "normalized_price")
+
+    def test_month_story_price_can_use_earlier_current_period_observations(self):
+        service = self.service()
+        self.add_receipt(
+            "2026-06-20", 2, "price-prior",
+            items=({"name": "Milk", "price": 2, "line_total": 2,
+                    "normalized_unit_price": 2, "normalized_price_unit": "eur_per_piece", "confidence": 0.95},),
+        )
+        for day in (1, 2):
+            self.add_receipt(
+                f"2026-07-{day:02d}", 2, f"price-current-history-{day}",
+                items=({"name": "Milk", "price": 2, "line_total": 2,
+                        "normalized_unit_price": 2, "normalized_price_unit": "eur_per_piece", "confidence": 0.95},),
+            )
+        self.add_receipt(
+            "2026-07-05", 5, "price-current-signal",
+            items=({"name": "Milk", "price": 5, "line_total": 5,
+                    "normalized_unit_price": 5, "normalized_price_unit": "eur_per_piece", "confidence": 0.95},),
+        )
+
+        insight = service.get_dashboard_data("current_month", as_of=date(2026, 7, 10))["month_story"]["insight"]
+
+        self.assertEqual(insight["type"], "normalized_price")
+        self.assertEqual(insight["metric_value"], 150.0)
 
     def test_month_story_prioritizes_unusual_purchase_with_enough_history(self):
         service = self.service()
@@ -567,7 +594,7 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(forecast["amount"], 310.0)
         self.assertEqual(forecast["elapsed_days"], 10)
 
-    def test_top_products_compare_only_same_normalized_unit(self):
+    def test_top_products_use_effective_identity_and_compare_only_same_normalized_unit(self):
         service = self.service()
         self.add_receipt(
             "2026-06-20",
@@ -588,9 +615,9 @@ class DashboardTests(unittest.TestCase):
         products = service.get_dashboard_data("current_month", as_of=date(2026, 7, 10))["receipt_month"]["top_products"]
         by_name = {product["name"]: product for product in products}
 
-        self.assertEqual(by_name["milk"]["unit_label"], "EUR/l")
-        self.assertEqual(by_name["milk"]["change_percent"], 25.0)
-        self.assertEqual(by_name["milk bad unit"]["history_label"], "No comparable history")
+        self.assertEqual(by_name["Milk"]["unit_label"], "EUR/l")
+        self.assertEqual(by_name["Milk"]["change_percent"], 25.0)
+        self.assertEqual(by_name["Milk bad unit"]["history_label"], "No comparable history")
 
     def test_action_queue_orders_caps_and_excludes_no_manual_rule(self):
         service = self.service()
@@ -619,9 +646,9 @@ class DashboardTests(unittest.TestCase):
             20,
             "queue-1",
             items=(
-                {"name": "Milk", "normalized_name": "milk", "category": "молочные", "confidence": 1, "normalized_unit_price": 2, "normalized_price_unit": "eur_per_l"},
-                {"name": "Milk", "normalized_name": "milk", "category": "напитки", "confidence": 1, "normalized_unit_price": 2, "normalized_price_unit": "eur_per_l"},
-                {"name": "Bread", "normalized_name": "bread", "category": "выпечка", "confidence": .5, "normalized_unit_price": 3, "normalized_price_unit": "eur_per_piece"},
+                {"name": "Milk", "normalized_name": "milk", "category": "молочные продукты и альтернативы", "confidence": 1, "normalized_unit_price": 2, "normalized_price_unit": "eur_per_l"},
+                {"name": "Milk", "normalized_name": "milk", "category": "безалкогольные напитки", "confidence": 1, "normalized_unit_price": 2, "normalized_price_unit": "eur_per_l"},
+                {"name": "Bread", "normalized_name": "bread", "category": "хлеб и выпечка", "confidence": .5, "normalized_unit_price": 3, "normalized_price_unit": "eur_per_piece"},
                 {"name": "Gold", "normalized_name": "gold", "category": "прочее", "confidence": 1, "normalized_unit_price": 20001, "normalized_price_unit": "eur_per_piece"},
             ),
         )
@@ -717,24 +744,24 @@ class DashboardTests(unittest.TestCase):
         self.assertNotIn("home-story.css", list_html)
         self.assertNotIn("searchInput.addEventListener('input'", list_html)
 
-        analytics = client.get("/analytics?start=2026-07-01&end=2026-07-14&category=мясо")
+        analytics = client.get("/analytics?start=2026-07-01&end=2026-07-14&category=мясо%20и%20птица")
         analytics_html = analytics.get_data(as_text=True)
         self.assertRegex(analytics_html, r'id="startDate"[^>]+value="2026-07-01"')
         self.assertRegex(analytics_html, r'id="endDate"[^>]+value="2026-07-14"')
-        self.assertIn('<option value="мясо" selected>', analytics_html)
+        self.assertIn('<option value="мясо и птица" selected>', analytics_html)
 
     def test_story_page_renders_grouped_remainder_and_real_evidence_links(self):
         service = self.service()
         for day in range(1, 4):
             self.add_receipt(
                 f"2026-06-{day:02d}", 20, f"story-prev-{day}",
-                items=({"name": "Одежда", "price": 20, "line_total": 20, "category": "одежда"},),
+                items=({"name": "Одежда", "price": 20, "line_total": 20, "category": "бытовое и личный уход"},),
             )
         evidence_id = None
         for day in range(1, 8):
             evidence_id = self.add_receipt(
                 f"2026-07-{day:02d}", 20, f"story-current-{day}", store="MAXIMA",
-                items=({"name": "Одежда", "price": 20, "line_total": 20, "category": "одежда"},),
+                items=({"name": "Одежда", "price": 20, "line_total": 20, "category": "бытовое и личный уход"},),
             )
 
         app = create_app()

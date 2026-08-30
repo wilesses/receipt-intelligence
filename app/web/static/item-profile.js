@@ -14,9 +14,9 @@
         const styles = getComputedStyle(document.documentElement);
         return {
             text: styles.getPropertyValue('--text-secondary').trim() || '#a6b1bd',
-            line: styles.getPropertyValue('--line').trim() || '#283541',
-            primary: styles.getPropertyValue('--analytics-chart-primary').trim() || '#4da8e8',
-            surface: styles.getPropertyValue('--surface').trim() || '#111820',
+            line: styles.getPropertyValue('--line').trim() || '#3a3a3a',
+            primary: styles.getPropertyValue('--analytics-chart-primary').trim() || '#17d1ac',
+            surface: styles.getPropertyValue('--surface').trim() || '#202020',
         };
     }
 
@@ -38,17 +38,21 @@
         state.textContent = message;
     }
 
-    function populateAccessibleValues(points) {
+    function populateAccessibleValues(points, unitLabel) {
         valueList.replaceChildren();
         points.forEach((point) => {
             const item = document.createElement('li');
-            item.textContent = `${point.label}: ${point.value.toFixed(2)} €`;
+            item.textContent = `${point.label}: ${point.value.toFixed(2)} ${unitLabel}`;
             valueList.appendChild(item);
         });
     }
 
     function renderChart() {
         if (!trendData) return;
+        if (trendData.status !== 'ready') {
+            showState('Недостаточно сопоставимой истории цен для этого товара.');
+            return;
+        }
         if (!window.Chart) {
             showState('График сейчас недоступен. Все покупки сохранены в истории ниже.');
             return;
@@ -57,6 +61,7 @@
         const points = trendData.labels
             .map((label, index) => ({ label, value: Number(trendData.values[index]) }))
             .filter((point) => Number.isFinite(point.value) && point.value > 0);
+        const unitLabel = trendData.unit_label || '';
 
         if (points.length < 2) {
             showState(points.length === 1
@@ -67,9 +72,13 @@
 
         destroyChart();
         const colors = chartColors();
-        populateAccessibleValues(points);
+        populateAccessibleValues(points, unitLabel);
         canvasFrame.hidden = false;
         state.hidden = true;
+        canvas.setAttribute(
+            'aria-label',
+            `Медианная сопоставимая цена: ${points.map(point => `${point.label} — ${point.value.toFixed(2)} ${unitLabel}`).join('; ')}`
+        );
 
         Chart.defaults.color = colors.text;
         Chart.defaults.borderColor = colors.line;
@@ -78,7 +87,7 @@
             data: {
                 labels: points.map((point) => point.label),
                 datasets: [{
-                    label: 'Средняя цена покупки',
+                    label: `Медианная сопоставимая цена, ${unitLabel}`,
                     data: points.map((point) => point.value),
                     borderColor: colors.primary,
                     backgroundColor: `${colors.primary}1f`,
@@ -103,7 +112,7 @@
                     tooltip: {
                         displayColors: false,
                         callbacks: {
-                            label: (context) => `${Number(context.raw).toFixed(2)} €`,
+                            label: (context) => `${Number(context.raw).toFixed(2)} ${unitLabel}`,
                         },
                     },
                 },
@@ -118,7 +127,7 @@
                         grid: { color: colors.line },
                         ticks: {
                             color: colors.text,
-                            callback: (value) => `${value} €`,
+                            callback: (value) => `${value} ${unitLabel}`,
                         },
                     },
                 },

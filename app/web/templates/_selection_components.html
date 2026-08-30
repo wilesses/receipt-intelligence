@@ -1,3 +1,4 @@
+{% from "_icons.html" import icon %}
 {% macro selection_row(product) -%}
 {% set product_name = product[0] %}
 {% set row_count = product[1] %}
@@ -102,7 +103,7 @@
 
     <input type="hidden" name="q" value="{{ query }}">
     <button class="btn btn-primary merge-submit" type="submit" data-merge-submit>
-        <i class="bi bi-intersect" aria-hidden="true"></i>
+        {{ icon("combine") }}
         Объединить выбранные
     </button>
 </aside>

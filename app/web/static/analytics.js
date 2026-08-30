@@ -6,6 +6,11 @@
 
     const filters = document.getElementById('analyticsFilters');
     const trendForm = document.getElementById('analyticsTrendForm');
+    const trendInput = document.getElementById('itemTrendInput');
+    const trendOptions = document.getElementById('itemTrendOptions');
+    const trendButton = document.getElementById('researchTrendButton');
+    const profileLink = document.getElementById('researchProfileLink');
+    const researchStatus = document.getElementById('researchSelectionStatus');
     const applyButton = document.getElementById('applyFilters');
     const status = document.getElementById('analyticsStatus');
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -45,6 +50,10 @@
     let lastAnalyticsData = null;
     let lastTrendData = null;
     let lastTrendName = '';
+    let researchMatches = new Map();
+    let selectedProduct = null;
+    let researchRequest = null;
+    let researchTimer = null;
 
     function cssColor(name, fallback) {
         return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
@@ -53,13 +62,13 @@
     function palette() {
         return {
             text: cssColor('--text-secondary', '#a6b1bd'),
-            muted: cssColor('--muted', '#7f8b98'),
-            line: cssColor('--line', '#283541'),
-            primary: cssColor('--analytics-chart-primary', '#4da8e8'),
-            category: cssColor('--analytics-chart-category', '#70a8c9'),
+            muted: cssColor('--muted', '#a6b1bd'),
+            line: cssColor('--line', '#3a3a3a'),
+            primary: cssColor('--analytics-chart-primary', '#17d1ac'),
+            category: cssColor('--analytics-chart-category', '#7f9c96'),
             product: cssColor('--analytics-chart-product', '#35b987'),
             trend: cssColor('--analytics-chart-trend', '#a98bc5'),
-            surface: cssColor('--surface', '#111820'),
+            surface: cssColor('--surface', '#202020'),
         };
     }
 
@@ -490,13 +499,14 @@
         const canvas = document.getElementById('trendChart');
         const message = document.getElementById('trendMsg');
         const frame = document.querySelector('[data-chart-frame="trend"]');
-        const values = data.values.map(value => (Number.isFinite(value) && value > 0 ? value : null));
-        const hasData = data.labels.length > 0 && values.some(value => value !== null);
+        const values = (data.values || []).map(value => (Number.isFinite(value) && value > 0 ? value : null));
+        const hasData = data.status === 'ready' && data.labels.length > 0 && values.some(value => value !== null);
+        const unitLabel = data.unit_label || '';
         canvas.hidden = !hasData;
         message.hidden = hasData;
         if (!hasData) {
             frame.dataset.state = 'empty';
-            message.textContent = `Для «${itemName}» нет доступной истории цены.`;
+            message.textContent = 'Недостаточно сопоставимой истории цен для этого товара.';
             return;
         }
 
@@ -504,14 +514,14 @@
         const colors = palette();
         canvas.setAttribute(
             'aria-label',
-            `Динамика цены товара ${itemName}: ${data.labels.map((label, index) => `${label} — ${money.format(values[index] || 0)}`).join('; ')}`
+            `Динамика сопоставимой цены товара ${itemName}: ${data.labels.map((label, index) => `${label} — ${Number(values[index] || 0).toFixed(2)} ${unitLabel}`).join('; ')}`
         );
         createChart('trend', {
             type: 'line',
             data: {
                 labels: data.labels,
                 datasets: [{
-                    label: 'Цена за единицу',
+                    label: `Медианная сопоставимая цена, ${unitLabel}`,
                     data: values,
                     borderColor: colors.trend,
                     backgroundColor: `${colors.trend}1f`,
@@ -526,13 +536,16 @@
                 ...commonOptions(),
                 plugins: {
                     legend: { display: false },
-                    tooltip: tooltipOptions(),
+                    tooltip: {
+                        ...tooltipOptions(),
+                        callbacks: { label: context => `${Number(context.raw).toFixed(2)} ${unitLabel}` },
+                    },
                     datalabels: {
                         display: context => context.chart.data.labels.length <= 8,
                         align: 'top',
                         anchor: 'end',
                         color: colors.text,
-                        formatter: value => currencyTick(value),
+                        formatter: value => `${Number(value).toFixed(2)} ${unitLabel}`,
                         font: { size: 10, weight: '600' },
                     },
                 },
@@ -542,7 +555,7 @@
                         beginAtZero: true,
                         border: { display: false },
                         grid: { color: colors.line },
-                        ticks: { callback: currencyTick, maxTicksLimit: 5 },
+                        ticks: { callback: value => `${value} ${unitLabel}`, maxTicksLimit: 5 },
                     },
                 },
             },
@@ -550,11 +563,57 @@
         });
     }
 
+    function invalidateResearchSelection(message) {
+        selectedProduct = null;
+        trendButton.disabled = true;
+        profileLink.hidden = true;
+        profileLink.removeAttribute('href');
+        researchStatus.textContent = message;
+    }
+
+    function selectResearchProduct() {
+        const match = researchMatches.get(trendInput.value.trim());
+        if (!match) return false;
+        selectedProduct = match;
+        trendButton.disabled = false;
+        profileLink.href = match.profile_url;
+        profileLink.hidden = false;
+        researchStatus.textContent = `Выбран товар: ${match.name}`;
+        return true;
+    }
+
+    async function searchResearchProducts(query) {
+        researchRequest?.abort();
+        researchRequest = new AbortController();
+        try {
+            const response = await fetch(
+                `/autocomplete/item_names?q=${encodeURIComponent(query)}&details=1`,
+                { signal: researchRequest.signal }
+            );
+            if (!response.ok) throw new Error(`Product search failed: ${response.status}`);
+            const matches = await response.json();
+            if (trendInput.value.trim() !== query) return;
+            researchMatches = new Map(matches.map(match => [match.name, match]));
+            trendOptions.replaceChildren(...matches.map(match => {
+                const option = document.createElement('option');
+                option.value = match.name;
+                return option;
+            }));
+            if (!selectResearchProduct()) {
+                researchStatus.textContent = matches.length
+                    ? 'Выберите точное название из найденных вариантов.'
+                    : 'Такой товар не найден в сохранённых покупках.';
+            }
+        } catch (error) {
+            if (error.name !== 'AbortError') {
+                researchStatus.textContent = 'Не удалось выполнить поиск товара.';
+            }
+        }
+    }
+
     async function loadTrend() {
-        const input = document.getElementById('itemTrendInput');
-        const itemName = input.value.trim();
-        if (!itemName) {
-            input.focus();
+        if (!selectedProduct && !selectResearchProduct()) {
+            trendInput.focus();
             destroyChart('trend');
             lastTrendData = null;
             lastTrendName = '';
@@ -565,9 +624,10 @@
             canvas.hidden = true;
             message.hidden = false;
             message.textContent =
-                'Выберите товар — здесь появится его помесячная динамика цены за единицу.';
+                'Выберите товар из найденных вариантов — здесь появится медианная нормализованная цена по месяцам.';
             return;
         }
+        const itemName = selectedProduct.name;
 
         const message = document.getElementById('trendMsg');
         const frame = document.querySelector('[data-chart-frame="trend"]');
@@ -592,6 +652,17 @@
     filters.addEventListener('submit', event => {
         event.preventDefault();
         loadAnalytics();
+    });
+    trendInput.addEventListener('input', () => {
+        const query = trendInput.value.trim();
+        clearTimeout(researchTimer);
+        researchRequest?.abort();
+        researchMatches = new Map();
+        trendOptions.replaceChildren();
+        invalidateResearchSelection(query
+            ? 'Ищем сохранённый товар…'
+            : 'Введите название и выберите товар из найденных вариантов.');
+        if (query) researchTimer = setTimeout(() => searchResearchProducts(query), 120);
     });
     trendForm.addEventListener('submit', event => {
         event.preventDefault();

@@ -1,11 +1,12 @@
 {% extends "base.html" %}
+{% from "_icons.html" import icon %}
 {% from "_review_components.html" import review_summary, review_card %}
 {% block title %}Проверка категорий{% endblock %}
 {% block body_class %}review-page{% endblock %}
 {% block content %}
 {% set filter_labels = {
     "all": "Все проблемные",
-    "other": "Категория «прочее»",
+    "other": "Категория «прочее / требует решения»",
     "conflict": "Конфликт категорий",
     "no_rule": "Без ручного правила",
     "new": "Новые и непроверенные"
@@ -58,7 +59,7 @@
                 </select>
             </label>
             <button class="btn btn-primary review-filter-submit" type="submit">
-                <i class="bi bi-funnel" aria-hidden="true"></i>
+                {{ icon("sliders-horizontal") }}
                 Показать
             </button>
         </form>
@@ -90,7 +91,7 @@
     <nav class="review-pager" aria-label="Страницы очереди">
         {% if has_prev %}
             <a class="btn btn-outline-secondary" href="{{ url_for('product_review', q=query, filter=problem_filter, sort=sort, limit=limit, page=page-1) }}">
-                <i class="bi bi-arrow-left" aria-hidden="true"></i>
+                {{ icon("arrow-left") }}
                 Назад
             </a>
         {% endif %}
@@ -98,7 +99,7 @@
         {% if has_next %}
             <a class="btn btn-outline-secondary" href="{{ url_for('product_review', q=query, filter=problem_filter, sort=sort, limit=limit, page=page+1) }}">
                 Дальше
-                <i class="bi bi-arrow-right" aria-hidden="true"></i>
+                {{ icon("arrow-right") }}
             </a>
         {% endif %}
     </nav>

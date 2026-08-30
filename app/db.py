@@ -78,7 +78,7 @@ def create_tables() -> None:
                 normalized_price_unit TEXT,
                 price_parse_source TEXT,
                 price_parse_confidence REAL,
-                category TEXT NOT NULL DEFAULT 'прочее',
+                category TEXT NOT NULL DEFAULT 'прочее / требует решения',
                 category_source TEXT NOT NULL DEFAULT 'rule',
                 FOREIGN KEY(receipt_id) REFERENCES receipts(id) ON DELETE CASCADE
             )
@@ -96,7 +96,7 @@ def create_tables() -> None:
         cursor.execute("PRAGMA table_info(items)")
         item_columns = {row[1] for row in cursor.fetchall()}
         if "category" not in item_columns:
-            cursor.execute("ALTER TABLE items ADD COLUMN category TEXT DEFAULT 'прочее'")
+            cursor.execute("ALTER TABLE items ADD COLUMN category TEXT DEFAULT 'прочее / требует решения'")
         if "canonical_name" not in item_columns:
             cursor.execute("ALTER TABLE items ADD COLUMN canonical_name TEXT")
         if "normalized_name" not in item_columns:

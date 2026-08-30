@@ -51,15 +51,15 @@ class UIShellTests(unittest.TestCase):
         css = css_path.read_text(encoding="utf-8")
 
         for declaration in (
-            '--archive-canvas: #090d12',
-            '--archive-surface: #111820',
-            '--archive-primary: #4da8e8',
-            '--archive-positive: #35b987',
-            '--archive-warning: #e8b04c',
-            '--archive-critical: #e6636b',
+            '--color-bg: var(--palette-ink-950)',
+            '--color-surface: #202020',
+            '--color-accent: var(--palette-mint-500)',
+            '--color-success: #35b987',
+            '--color-warning: #e8b04c',
+            '--color-danger: #e6636b',
             'html[data-theme="light"]',
-            '--archive-canvas: #f4f7fa',
-            '--story-palette-canvas: #f7f8f6',
+            '--color-bg: #f7f8f6',
+            '--color-accent: #08785b',
             '--story-ambient-layer:',
         ):
             self.assertIn(declaration, css)
@@ -93,7 +93,7 @@ class UIShellTests(unittest.TestCase):
 
         self.assertRegex(
             css,
-            r"\.receipt-expand-mark i\s*\{[^}]*transition:\s*transform var\(--motion-fast\) var\(--ease-out\)",
+            r"\.receipt-expand-mark \.app-icon\s*\{[^}]*transition:\s*transform var\(--motion-fast\) var\(--ease-out\)",
         )
         self.assertRegex(css, r"\.progress-bar\s*\{[^}]*transform-origin:\s*left center")
         self.assertIn("transform: scaleX(var(--progress-scale, 0))", css)
@@ -119,21 +119,26 @@ class UIShellTests(unittest.TestCase):
             "--palette-ink-900: #1e1e1e",
             "--palette-ink-800: #2b2b2b",
             "--palette-mint-500: #17d1ac",
-            "--color-bg: var(--story-palette-canvas)",
-            "--color-bg-elevated: var(--story-palette-elevated)",
-            "--color-surface: var(--story-palette-surface)",
-            "--color-surface-muted: var(--story-palette-muted)",
-            "--color-text: var(--story-palette-text)",
-            "--color-text-muted: var(--story-palette-text-muted)",
+            "--color-bg: var(--palette-ink-950)",
+            "--color-bg-elevated: var(--palette-ink-900)",
+            "--color-surface: #202020",
+            "--color-surface-muted: var(--palette-ink-800)",
+            "--color-text: #f2f5f7",
+            "--color-text-muted: #a6b1bd",
             "--color-accent-soft: rgb(23 209 172 / .14)",
-            "--color-positive: var(--palette-mint-500)",
-            "--color-negative: #e6636b",
+            "--color-positive: var(--color-success)",
+            "--color-negative: var(--color-danger)",
             "--color-shadow: rgb(0 0 0 / .28)",
-            "--bg: var(--archive-canvas)",
-            "--surface: var(--archive-surface)",
-            "--primary: var(--archive-primary)",
+            "--bg: var(--color-bg)",
+            "--surface: var(--color-surface)",
+            "--primary: var(--color-accent)",
         ):
             self.assertIn(declaration, css)
+        self.assertNotIn("--archive-", css)
+        self.assertNotIn("--story-palette-", css)
+
+        home_css = css_path.with_name("home-story.css").read_text(encoding="utf-8")
+        self.assertIn("--primary-dark: var(--color-accent-hover)", home_css)
 
     def test_receipt_workspace_is_a_single_partial_and_empty_state_renders(self):
         template_dir = Path(__file__).parents[1] / "app" / "web" / "templates"
@@ -280,7 +285,8 @@ class UIShellTests(unittest.TestCase):
         self.assertIn("Очень длинное название товара", html)
         self.assertIn("К проверке", html)
         self.assertIn("Проверено", html)
-        self.assertIn("Нет сопоставимой истории цен", html)
+        self.assertIn("Цена пока несопоставима", html)
+        self.assertIn("Не удалось надёжно определить цену за кг, литр или штуку.", html)
         self.assertIn("Источники и ограничения", html)
         self.assertIn("data-open-receipt-drawer", html)
         self.assertIn('role="dialog"', html)
@@ -802,6 +808,51 @@ class UIShellTests(unittest.TestCase):
 
         html = self.client.get("/receipt/1").get_data(as_text=True)
         self.assertIn("итого 2,40 €", html)
+
+    def test_receipt_detail_status_uses_prior_normalized_history(self):
+        prices = (1.0, 1.0, 2.0, 1.15)
+        for index, price in enumerate(prices, start=1):
+            db.add_receipt_with_items(
+                f"2026-07-{index:02d}",
+                "RIMI",
+                price,
+                f"shared-price-{index}",
+                [{
+                    "name": "Shared Milk 1L",
+                    "quantity": 1,
+                    "quantity_unit": "piece",
+                    "line_total": price,
+                    "unit_price": price,
+                    "source": "package_name",
+                }],
+            )
+
+        html = self.client.get("/receipt/4").get_data(as_text=True)
+
+        self.assertIn("Выше медианы", html)
+        self.assertIn("+15.0%", html)
+
+    def test_receipt_detail_shows_eligible_history_progress(self):
+        for index in range(1, 4):
+            db.add_receipt_with_items(
+                f"2026-07-{index:02d}",
+                "RIMI",
+                2.0,
+                f"receipt-progress-{index}",
+                [{
+                    "name": "Progress milk 1L",
+                    "quantity": 1,
+                    "quantity_unit": "piece",
+                    "line_total": 2.0,
+                    "unit_price": 2.0,
+                    "source": "package_name",
+                }],
+            )
+
+        html = self.client.get("/receipt/3").get_data(as_text=True)
+
+        self.assertIn("Недостаточно истории цен", html)
+        self.assertIn("Сопоставимых наблюдений: 2 из 3.", html)
 
 
 if __name__ == "__main__":

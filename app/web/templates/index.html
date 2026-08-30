@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_icons.html" import icon %}
 {% block title %}{{ "Чеки" if view == "receipts" else "Интеллектуальная сводка" }}{% endblock %}
 {% block body_class %}{% if view != "receipts" %}home-story-page{% endif %}{% endblock %}
 {% block extra_head %}
@@ -63,7 +64,7 @@
     <div class="story-narrative" data-story-narrative>
     {% if story.receipt_count %}
     <button type="button" class="story-skip" data-story-skip hidden>
-        Пропустить историю <i class="bi bi-arrow-down" aria-hidden="true"></i>
+        Пропустить историю {{ icon("skip-forward") }}
     </button>
     {% endif %}
     <section class="story-act story-act-month" aria-labelledby="story-month-title" data-story-act="month">
@@ -119,13 +120,13 @@
         <div class="story-empty" role="status">
             <p>После первого импорта здесь появятся реальные покупки и итог месяца.</p>
             <a href="{{ url_for('upload') }}" class="story-primary-link">
-                Импортировать чек <i class="bi bi-arrow-up-right" aria-hidden="true"></i>
+                Импортировать чек {{ icon("arrow-up-right") }}
             </a>
         </div>
         {% endif %}
 
         <a class="story-archive-link" href="{{ url_for('index', view='receipts', period=story_period) }}">
-            Открыть чеки за этот месяц <i class="bi bi-arrow-up-right" aria-hidden="true"></i>
+            Открыть чеки за этот месяц {{ icon("arrow-up-right") }}
         </a>
     </section>
 
@@ -140,12 +141,12 @@
                 aria-expanded="false"
                 aria-controls="story-month-details story-insight-copy-details story-evidence-details"
             >
-                Повторить историю <i class="bi bi-arrow-counterclockwise" aria-hidden="true"></i>
+                Повторить историю {{ icon("rotate-ccw") }}
             </button>
             <div class="story-insight-copy-details" id="story-insight-copy-details">
             <p class="story-metric">{{ story.insight.metric_confirmation }}</p>
             <a class="story-destination-link" href="{{ story.insight.destination_link }}">
-                {{ story.insight.destination_label }} <i class="bi bi-arrow-right" aria-hidden="true"></i>
+                {{ story.insight.destination_label }} {{ icon("arrow-right") }}
             </a>
             </div>
         </header>
@@ -161,7 +162,7 @@
                         <span><time datetime="{{ event.date }}">{{ event.date }}</time> · чек #{{ event.id }}</span>
                         <strong>{{ event.store or "Без магазина" }}</strong>
                         <span class="story-evidence-total"><small>Итого чека</small><b>{{ "%.2f"|format(event.total) }} €</b></span>
-                        <i class="bi bi-arrow-up-right" aria-hidden="true"></i>
+                        {{ icon("arrow-up-right") }}
                     </a>
                 </li>
                 {% endfor %}

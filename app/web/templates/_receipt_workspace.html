@@ -1,3 +1,4 @@
+{% from "_icons.html" import icon %}
 {% set visible_spend = receipts|sum(attribute='total') %}
 {% set visible_item_count = receipts|sum(attribute='item_count') %}
 {% if store_search %}
@@ -18,7 +19,7 @@
                 {% endif %}
             </div>
             <a href="{{ url_for('upload') }}" class="btn btn-primary receipts-import">
-                <i class="bi bi-cloud-arrow-up" aria-hidden="true"></i>
+                {{ icon("upload") }}
                 Импортировать
             </a>
         </header>
@@ -69,7 +70,7 @@
                 <label for="searchInput">Магазин</label>
                 <div class="search-control">
                     <button type="submit" class="command-search-button" aria-label="Найти чеки по магазину">
-                        <i class="bi bi-search" aria-hidden="true"></i>
+                        {{ icon("search") }}
                     </button>
                     <input
                         type="search"
@@ -149,7 +150,7 @@
                     </span>
                     <strong class="amount-cell receipt-total">{{ "%.2f"|format(receipt.total) }} €</strong>
                     <span class="receipt-expand-mark" aria-hidden="true">
-                        <i class="bi bi-chevron-down"></i>
+                        {{ icon("chevron-down") }}
                     </span>
                 </button>
                 <noscript>
@@ -221,7 +222,7 @@
                         </div>
                         <div class="receipt-actions">
                             <a href="{{ url_for('view_receipt', receipt_id=receipt.id, return_to=receipt_return_path) }}" class="btn btn-outline-primary btn-sm">
-                                <i class="bi bi-eye" aria-hidden="true"></i>
+                                {{ icon("eye") }}
                                 Открыть чек
                             </a>
                             <button

@@ -1,11 +1,13 @@
 {% extends "base.html" %}
-{% from "_product_dossier_components.html" import product_summary, price_story, purchase_register %}
+{% from "_icons.html" import icon %}
+{% from "_product_dossier_components.html" import product_summary, price_story, store_price_comparison, purchase_register %}
 {% block title %}{{ name }}{% endblock %}
 {% block body_class %}item-profile-page{% endblock %}
 {% block content %}
 {% set latest_row = rows[-1] if rows else none %}
 {% set canonical_name = rows[0][9] if rows and rows[0][9] else name %}
-{% set category = latest_row[6] if latest_row and latest_row[6] else "Категория не указана" %}
+{% set stored_category = latest_row[6] if latest_row and latest_row[6] else none %}
+{% set category = category_for_reporting(stored_category) %}
 {% set receipt_count = rows|map(attribute=4)|unique|list|length if rows else 0 %}
 
 <article class="product-dossier">
@@ -22,7 +24,7 @@
             </div>
         </div>
         <a href="{{ url_for('analytics') }}" class="btn btn-outline-secondary">
-            <i class="bi bi-arrow-left" aria-hidden="true"></i>
+            {{ icon("arrow-left") }}
             К аналитике
         </a>
     </header>
@@ -34,6 +36,7 @@
     {% if rows %}
         {{ product_summary(stats, latest_row, receipt_count, rows|length) }}
         {{ price_story(price_evaluation, latest_price_model, name) }}
+        {{ store_price_comparison(store_comparison) }}
         {{ purchase_register(rows, category_options) }}
 
         <section class="product-related" aria-labelledby="product-related-title">

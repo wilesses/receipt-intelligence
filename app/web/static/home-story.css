@@ -742,7 +742,7 @@ html[data-story-bootstrap-mode="repeat"] .is-story-workspace,
     --line: var(--story-line);
     --line-strong: var(--story-line);
     --primary: var(--story-accent);
-    --primary-dark: var(--story-accent);
+    --primary-dark: var(--color-accent-hover);
     --teal: var(--story-accent);
     --positive: var(--color-success);
     grid-template-columns: minmax(0, 1fr);

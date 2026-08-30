@@ -1,3 +1,4 @@
+{% from "_icons.html" import icon %}
 {% macro review_status(label, tone="attention") -%}
 <span class="review-status review-status-{{ tone }}">{{ label }}</span>
 {%- endmacro %}
@@ -6,7 +7,7 @@
 <li class="review-reason" data-reason-code="{{ problem }}">
     <span class="review-reason-mark" aria-hidden="true"></span>
     <span>
-        {% if problem == "Прочее" %}Текущая категория — «прочее»
+        {% if problem == "Прочее" %}Текущая категория — «прочее / требует решения»
         {% elif problem == "Fallback" %}Категория назначена резервным правилом
         {% elif problem == "Конфликт категорий" %}В группе встречаются разные категории
         {% elif problem == "Manual + rule" %}Ручное и автоматическое правила дали разные источники
@@ -57,7 +58,7 @@
             </select>
         </label>
         <button class="btn btn-primary" type="submit">
-            <i class="bi bi-check2" aria-hidden="true"></i>
+            {{ icon("check") }}
             Подтвердить
         </button>
     </form>
@@ -84,6 +85,7 @@
             <div>
                 <dt>Текущая категория</dt>
                 <dd>{{ group.categories|join(", ") }}</dd>
+                {% if group.legacy_categories %}<dd>Сохранено ранее: {{ group.legacy_categories|join(", ") }}</dd>{% endif %}
             </div>
             <div>
                 <dt>Уверенность</dt>

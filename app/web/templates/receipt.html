@@ -1,11 +1,12 @@
 {% extends "base.html" %}
+{% from "_icons.html" import icon %}
 {% block title %}{% if receipt %}{{ receipt.store or "Чек" }} · {{ receipt.date or receipt_id }}{% else %}Чек не найден{% endif %}{% endblock %}
 {% block body_class %}receipt-detail-page{% endblock %}
 {% block content %}
 {% if not receipt %}
 <section class="receipt-detail-empty" aria-labelledby="receipt-not-found-title">
     <a href="{{ return_path }}" class="receipt-back-link">
-        <i class="bi bi-arrow-left" aria-hidden="true"></i>
+        {{ icon("arrow-left") }}
         Вернуться в архив
     </a>
     <h1 id="receipt-not-found-title">Чек не найден</h1>
@@ -16,7 +17,7 @@
     <header class="receipt-detail-header">
         <div class="receipt-detail-identity">
             <a href="{{ return_path }}" class="receipt-back-link">
-                <i class="bi bi-arrow-left" aria-hidden="true"></i>
+                {{ icon("arrow-left") }}
                 Вернуться в архив
             </a>
             <h1 id="receipt-detail-title">{{ receipt.store or "Магазин не указан" }}</h1>
@@ -119,6 +120,9 @@
                             </label>
                             <button class="btn btn-outline-primary btn-sm" type="submit">Сохранить</button>
                             <small>Источник: {{ item.category_source_label }}</small>
+                            {% if item.legacy_category %}
+                            <small>Сохранено ранее: {{ item.legacy_category }}</small>
+                            {% endif %}
                         </form>
                     </details>
                 </div>
@@ -135,8 +139,17 @@
                         {% else %}В обычном диапазоне{% endif %}
                         · {{ "%+.1f"|format(item.price_status.deviation) }}%
                     </span>
-                    {% else %}
-                    <span class="receipt-price-context">Нет сопоставимой истории цен</span>
+                    {% elif item.price_evidence %}
+                    <div class="receipt-price-context">
+                        <strong>{{ item.price_evidence.title }}</strong>
+                        <small>
+                            {% if item.price_evidence.show_progress %}
+                                {{ item.price_evidence.progress_text }}
+                            {% else %}
+                                {{ item.price_evidence.explanation }}
+                            {% endif %}
+                        </small>
+                    </div>
                     {% endif %}
                 </div>
             </div>

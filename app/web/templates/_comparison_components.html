@@ -1,3 +1,4 @@
+{% from "_icons.html" import icon %}
 {% from "_review_components.html" import review_status, review_reason %}
 
 {% macro comparison_side(item, side, pair_index) -%}
@@ -81,7 +82,7 @@
 
         <div class="comparison-actions" aria-label="Действия для пары {{ pair_index }}">
             <a class="btn btn-primary" href="{{ url_for('products_merge', q=item.merge_query) }}">
-                <i class="bi bi-diagram-3" aria-hidden="true"></i>
+                {{ icon("combine") }}
                 Перейти к объединению
             </a>
             <button class="btn btn-outline-secondary" type="button" data-dismiss-pair>

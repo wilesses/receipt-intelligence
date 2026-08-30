@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_icons.html" import icon %}
 {% from "_selection_components.html" import selection_row, merge_command_band %}
 {% block title %}Объединение товаров{% endblock %}
 {% block body_class %}review-page merge-page{% endblock %}
@@ -29,7 +30,7 @@
                 <input class="form-control" type="search" name="q" value="{{ query }}" placeholder="Исходное или каноническое название" autocomplete="off">
             </label>
             <button class="btn btn-primary" type="submit">
-                <i class="bi bi-search" aria-hidden="true"></i>
+                {{ icon("search") }}
                 Найти
             </button>
             {% if query %}

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_icons.html" import icon %}
 {% from "_review_components.html" import review_summary %}
 {% from "_comparison_components.html" import comparison_pair %}
 {% block title %}Похожие товары{% endblock %}
@@ -47,7 +48,7 @@
                 </select>
             </label>
             <button class="btn btn-primary review-filter-submit" type="submit">
-                <i class="bi bi-funnel" aria-hidden="true"></i>
+                {{ icon("sliders-horizontal") }}
                 Показать
             </button>
         </form>

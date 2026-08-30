@@ -1,3 +1,4 @@
+{% from "_icons.html" import icon %}
 {% macro product_summary(stats, latest_row, receipt_count, occurrence_count) -%}
 <section class="product-summary" aria-labelledby="product-summary-title">
     <h2 id="product-summary-title" class="visually-hidden">Краткая сводка товара</h2>
@@ -7,7 +8,7 @@
             <dd>{{ "%.2f"|format(latest_row[3] or 0) }} €</dd>
         </div>
         <div>
-            <dt>Средняя цена</dt>
+            <dt>Потрачено всего</dt>
             <dd>{{ "%.2f"|format(stats[0] or 0) }} €</dd>
         </div>
         <div>
@@ -44,13 +45,12 @@
         <div class="product-price-evidence">
             <div class="product-price-current">
                 <span>Последняя сопоставимая цена</span>
-                <strong>{{ "%.2f"|format(price_evaluation.last_price) }} €</strong>
-                <small>{{ price_evaluation.comparison_label }}</small>
+                <strong>{{ "%.2f"|format(price_evaluation.last_price) }} {{ price_evaluation.unit_label }}</strong>
             </div>
             <dl>
                 <div>
                     <dt>Обычный уровень</dt>
-                    <dd>{{ "%.2f"|format(price_evaluation.median_price) }} €</dd>
+                    <dd>{{ "%.2f"|format(price_evaluation.median_price) }} {{ price_evaluation.unit_label }}</dd>
                 </div>
                 <div>
                     <dt>Изменение к медиане</dt>
@@ -58,14 +58,17 @@
                 </div>
                 <div>
                     <dt>Диапазон истории</dt>
-                    <dd>{{ "%.2f"|format(price_evaluation.min_price) }}–{{ "%.2f"|format(price_evaluation.max_price) }} €</dd>
+                    <dd>{{ "%.2f"|format(price_evaluation.min_price) }}–{{ "%.2f"|format(price_evaluation.max_price) }} {{ price_evaluation.unit_label }}</dd>
                 </div>
             </dl>
         </div>
     {% else %}
         <div class="product-price-context">
-            <strong>Для сравнения пока недостаточно покупок</strong>
-            <p>Нужно не менее трёх сопоставимых значений. Доступные покупки остаются в истории ниже.</p>
+            <strong>{{ price_evaluation.evidence.title }}</strong>
+            <p>{{ price_evaluation.evidence.explanation }}</p>
+            {% if price_evaluation.evidence.show_progress %}
+                <p>{{ price_evaluation.evidence.progress_text }}</p>
+            {% endif %}
         </div>
     {% endif %}
 
@@ -75,14 +78,14 @@
         data-trend-url="{{ url_for('item_trend', item=product_name) }}"
     >
         <div class="product-trend-heading">
-            <strong>Средняя цена покупки по месяцам</strong>
-            <span>Без приведения к размеру упаковки</span>
+            <strong>Медианная сопоставимая цена по месяцам</strong>
+            <span>Только безопасные нормализованные наблюдения</span>
         </div>
         <div class="product-trend-canvas" data-trend-canvas hidden>
             <canvas
                 id="trendChart"
                 role="img"
-                aria-label="Средняя цена покупки товара по месяцам без приведения к размеру упаковки"
+                aria-label="Медианная сопоставимая цена товара по месяцам"
                 aria-describedby="trendDataList"
             ></canvas>
         </div>
@@ -122,7 +125,7 @@
                     </dd>
                 </div>
                 <div>
-                    <dt>Оплачено за единицу</dt>
+                    <dt>Оплачено на единицу записанного количества</dt>
                     <dd>
                         {% if latest_price_model.unit_price %}
                             {{ "%.2f"|format(latest_price_model.unit_price) }} €
@@ -131,7 +134,7 @@
                 </div>
                 <div>
                     <dt>Источник нормализации</dt>
-                    <dd>{{ latest_price_model.source or "—" }}</dd>
+                    <dd>{{ "Ручная structured correction" if latest_price_model.source == "manual_correction" else latest_price_model.source or "—" }}</dd>
                 </div>
                 <div>
                     <dt>Уверенность нормализации</dt>
@@ -143,6 +146,78 @@
                 </div>
             </dl>
         </details>
+    {% endif %}
+</section>
+{%- endmacro %}
+
+{% macro store_price_comparison(comparison) -%}
+<section class="store-price-comparison" aria-labelledby="store-price-comparison-title">
+    <header class="product-section-header store-comparison-header">
+        <div>
+            <h2 id="store-price-comparison-title">Где вы платили меньше</h2>
+            <p>Только сопоставимые покупки из вашей истории — это не текущие цены магазинов.</p>
+        </div>
+        {% if comparison.evidence_level == 'COMPARABLE' %}
+            <span class="store-comparison-state">Сопоставимая история</span>
+        {% elif comparison.evidence_level == 'LIMITED' %}
+            <span class="store-comparison-state">История ограничена</span>
+        {% elif comparison.evidence_level == 'PRELIMINARY' %}
+            <span class="store-comparison-state">Сравнение пока предварительное</span>
+        {% else %}
+            <span class="store-comparison-state">Сравнение по магазинам пока недоступно</span>
+        {% endif %}
+    </header>
+
+    {% if comparison.evidence_level %}
+        <ol class="store-comparison-list" aria-label="Исторические цены по магазинам">
+            {% for store in comparison.stores %}
+                <li class="store-comparison-row">
+                    <div class="store-comparison-identity">
+                        <strong>{{ store.store }}</strong>
+                        <span>{{ store.observation_count }} {{ store.observation_word }} · до {{ store.latest_date }}</span>
+                    </div>
+                    <div class="store-comparison-median">
+                        <span>Медиана</span>
+                        <strong>{{ "%.2f"|format(store.median_price) }} {{ comparison.unit_label }}</strong>
+                    </div>
+                    <div class="store-comparison-range">
+                        <span>Диапазон</span>
+                        <strong>{{ "%.2f"|format(store.min_price) }}–{{ "%.2f"|format(store.max_price) }} {{ comparison.unit_label }}</strong>
+                    </div>
+                </li>
+            {% endfor %}
+        </ol>
+
+        <div class="store-comparison-conclusion">
+            {% if comparison.evidence_level == 'PRELIMINARY' %}
+                <strong>Недостаточно истории, чтобы определить, где этот товар обычно обходился дешевле.</strong>
+            {% elif comparison.is_tie %}
+                <strong>Медианные цены в магазинах совпали.</strong>
+                {% if comparison.evidence_level == 'LIMITED' %}
+                    <p>Наблюдений пока мало, поэтому это только ограниченная историческая картина.</p>
+                {% endif %}
+            {% elif comparison.evidence_level == 'LIMITED' %}
+                <strong>В доступной истории медиана в {{ comparison.cheapest_store }} ниже примерно на {{ "%.1f"|format(comparison.difference_percent)|replace('.', ',') }}%.</strong>
+                <p>История пока ограничена и не показывает текущие цены.</p>
+            {% else %}
+                <strong>Исторически медианная цена в {{ comparison.cheapest_store }} была примерно на {{ "%.1f"|format(comparison.difference_percent)|replace('.', ',') }}% ниже, чем в {{ comparison.comparison_store }}.</strong>
+                <p>Вывод относится только к вашим сохранённым покупкам.</p>
+            {% endif %}
+        </div>
+    {% else %}
+        <div class="store-comparison-limitation">
+            {% if comparison.reason == 'only_one_store' %}
+                В истории есть сопоставимые покупки только в одном магазине.
+            {% elif comparison.reason == 'incompatible_price_units' %}
+                В истории используются разные единицы сравнения, поэтому эти цены нельзя сопоставить.
+            {% elif comparison.reason == 'unresolved_product_identity' %}
+                Группа товара ещё требует уточнения, поэтому сравнение по магазинам скрыто.
+            {% elif comparison.reason == 'ambiguous_measurement' %}
+                Размер или способ измерения покупок неоднозначен, поэтому сравнение скрыто.
+            {% else %}
+                Покупки есть, но надёжных нормализованных цен для сравнения пока недостаточно.
+            {% endif %}
+        </div>
     {% endif %}
 </section>
 {%- endmacro %}
@@ -161,7 +236,7 @@
         <span>Покупка</span>
         <span>Количество</span>
         <span>Итого за позицию</span>
-        <span>Цена за единицу</span>
+        <span>Сопоставимая цена</span>
         <span>Источник</span>
     </div>
 
@@ -198,15 +273,16 @@
                         aria-label="Открыть чек из {{ row[1] or 'магазина' }} за {{ row[0] }}"
                     >
                         Открыть чек
-                        <i class="bi bi-arrow-up-right" aria-hidden="true"></i>
+                        {{ icon("arrow-up-right") }}
                     </a>
 
                     <form method="post" action="{{ url_for('update_item_category', item_id=row[5]) }}" class="purchase-category-form">
                         <label>
                             <span>Категория</span>
+                            {% set current_category = category_for_reporting(row[6]) %}
                             <select name="category" class="form-select category-select">
                                 {% for category in category_options %}
-                                    <option value="{{ category }}" {% if category == (row[6] or 'прочее') %}selected{% endif %}>{{ category }}</option>
+                                    <option value="{{ category }}" {% if category == current_category %}selected{% endif %}>{{ category }}</option>
                                 {% endfor %}
                             </select>
                         </label>
@@ -219,6 +295,9 @@
                         </label>
                         <button class="btn btn-outline-primary" type="submit">Сохранить</button>
                         <span class="source-badge source-{{ row[7] or 'rule' }}">{{ category_source_label(row[7]) }}</span>
+                        {% if row[6] and row[6]|lower != current_category %}
+                        <small>Сохранено ранее: {{ row[6] }}</small>
+                        {% endif %}
                     </form>
                 </article>
             </li>

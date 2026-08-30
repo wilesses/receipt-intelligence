@@ -51,7 +51,7 @@
             </thead>
             <tbody>
                 {% for row in rows %}
-                    {{ diagnostic_row(row, issue_filter) }}
+                    {{ diagnostic_row(row, issue_filter, row_policies[loop.index0], limit) }}
                 {% endfor %}
             </tbody>
             </table>

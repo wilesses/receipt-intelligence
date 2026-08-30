@@ -1,12 +1,19 @@
 import re
-from statistics import median
-from urllib.parse import parse_qsl, unquote, urlsplit
+import sqlite3
+from urllib.parse import parse_qsl, urlsplit
 
-from flask import flash, jsonify, redirect, render_template, request, url_for
+from flask import abort, current_app, flash, jsonify, redirect, render_template, request, url_for
+from itsdangerous import BadSignature, URLSafeTimedSerializer
 from werkzeug.utils import secure_filename
 
 from app.analytics_service import get_analytics_data, get_item_trend
-from app.category_keywords import CANONICAL_CATEGORIES, SOURCE_LABELS, normalize_category_name
+from app.category_keywords import (
+    CANONICAL_CATEGORIES,
+    SOURCE_LABELS,
+    UNRESOLVED_CATEGORY,
+    category_for_reporting,
+    normalize_category_name,
+)
 from app.category_rules import (
     apply_category_to_product_key,
     get_product_key,
@@ -23,12 +30,26 @@ from app.db import get_connection, get_items_by_receipt
 from app.gmail_fetcher import fetch_pdf_attachments, gmail_settings
 from app.importer import process_pdf_api
 from app.product_matcher import find_similar_products
+from app.price_correction import (
+    CorrectionError,
+    apply_price_correction,
+    build_correction_preview,
+    classify_price_correction,
+    correction_token_payload,
+)
+from app.price_deviation import PRICE_UNIT_LABELS, evaluate_price_deviation
+from app.price_deviation_presentation import build_price_evidence_presentation
+from app.price_model import derive_price_data
+from app.product_identity import (
+    effective_product_identity_sql,
+    resolve_effective_product_identity,
+)
+from app.store_price_comparison import build_store_price_comparison
 
 
 ALLOWED_EXTENSIONS = {"pdf"}
-DEFAULT_CATEGORY = "прочее"
-PRODUCT_NAME_EXPR = "COALESCE(NULLIF(items.canonical_name, ''), items.name)"
-PRICE_UNIT_LABELS = {"eur_per_l": "€/L", "eur_per_kg": "€/kg", "eur_per_piece": "€/шт."}
+DEFAULT_CATEGORY = UNRESOLVED_CATEGORY
+PRODUCT_NAME_EXPR = effective_product_identity_sql("items")
 RECEIPT_RETURN_PERIODS = {
     "current_month",
     "previous_month",
@@ -153,13 +174,16 @@ def _review_groups(conn, query=""):
             "has_rule": product_key in rule_keys,
             "has_empty_category": False,
             "has_empty_normalized_name": False,
+            "legacy_categories": set(),
         })
 
         group["aliases"].add(name or "")
         group["item_count"] += 1
         group["receipt_ids"].add(receipt_id)
-        normalized_category = normalize_category_name(category)
+        normalized_category = category_for_reporting(category)
         group["categories"].add(normalized_category)
+        if category and str(category).strip().lower() not in CANONICAL_CATEGORIES:
+            group["legacy_categories"].add(str(category).strip())
         group["sources"].add(category_source or "rule")
         group["last_date"] = max(group["last_date"], date or "")
         if store:
@@ -176,8 +200,10 @@ def _review_groups(conn, query=""):
         categories = sorted(group["categories"])
         sources = sorted(group["sources"])
         problems = []
-        if "прочее" in categories:
+        if UNRESOLVED_CATEGORY in categories:
             problems.append("Прочее")
+        if group["legacy_categories"]:
+            problems.append("Устаревшая категория")
         if "fallback" in sources:
             problems.append("Fallback")
         if len(categories) > 1:
@@ -199,6 +225,7 @@ def _review_groups(conn, query=""):
             "aliases": sorted(alias for alias in group["aliases"] if alias),
             "receipt_count": len(group["receipt_ids"]),
             "categories": categories,
+            "legacy_categories": sorted(group["legacy_categories"]),
             "sources": sources,
             "source_labels": [source_label(source) for source in sources],
             "stores": sorted(group["stores"]),
@@ -210,57 +237,41 @@ def _review_groups(conn, query=""):
     return result
 
 
-def build_price_evaluation(rows):
-    normalized_by_unit = {}
-    legacy_prices = []
-    for row in rows:
-        quantity = float(row[2] or 0)
-        price = float(row[3] or 0)
-        normalized_price = row[10] if len(row) > 10 else None
-        normalized_unit = row[11] if len(row) > 11 else None
-        if normalized_price and normalized_unit and normalized_unit != "unknown":
-            normalized_by_unit.setdefault(normalized_unit, []).append(float(normalized_price))
-        if quantity > 0 and price > 0:
-            legacy_prices.append(price / quantity)
-
-    comparison_source = "legacy comparison"
-    comparison_label = "legacy comparison"
-    unit_prices = legacy_prices
-    for normalized_unit, values in normalized_by_unit.items():
-        if len(values) >= 3:
-            unit_prices = values
-            comparison_source = normalized_unit
-            comparison_label = f"по {PRICE_UNIT_LABELS.get(normalized_unit, normalized_unit)}"
-            break
-
-    if len(unit_prices) < 3:
-        return {"has_enough_data": False}
-
-    average_price = sum(unit_prices) / len(unit_prices)
-    median_price = median(unit_prices)
-    min_price = min(unit_prices)
-    max_price = max(unit_prices)
-    last_price = unit_prices[-1]
-
-    if median_price and last_price <= median_price * 0.9:
-        status = "🔥 Выгодная цена"
-    elif median_price and last_price >= median_price * 1.15:
-        status = "⚠️ Дороже обычного"
-    else:
-        status = "Обычная цена"
-
+def build_price_evaluation(current_observation, observations):
+    if current_observation is None:
+        result = {
+            "status": "INSUFFICIENT_HISTORY",
+            "reason": "missing_price_evidence",
+            "eligible_prior_observation_count": 0,
+        }
+        return {
+            "has_enough_data": False,
+            "reason": result["reason"],
+            "evidence": build_price_evidence_presentation(result),
+        }
+    result = evaluate_price_deviation(current_observation, observations)
+    if result["status"] == "INSUFFICIENT_HISTORY":
+        return {
+            "has_enough_data": False,
+            "reason": result["reason"],
+            "evidence": build_price_evidence_presentation(result),
+        }
+    status = {
+        "CHEAPER_THAN_USUAL": "🔥 Выгодная цена",
+        "MORE_EXPENSIVE_THAN_USUAL": "⚠️ Дороже обычного",
+        "NORMAL": "Обычная цена",
+    }[result["status"]]
+    unit = result["normalized_price_unit"]
     return {
         "has_enough_data": True,
-        "average_price": round(average_price, 2),
-        "median_price": round(median_price, 2),
-        "min_price": round(min_price, 2),
-        "max_price": round(max_price, 2),
-        "last_price": round(last_price, 2),
+        "last_price": round(result["current_normalized_price"], 2),
+        "median_price": round(result["historical_median"], 2),
+        "min_price": round(result["historical_min"], 2),
+        "max_price": round(result["historical_max"], 2),
         "status": status,
-        "comparison_source": comparison_source,
-        "comparison_label": comparison_label,
-        "average_deviation": round(((last_price - average_price) / average_price) * 100, 1) if average_price else 0,
-        "median_deviation": round(((last_price - median_price) / median_price) * 100, 1) if median_price else 0,
+        "comparison_source": unit,
+        "unit_label": PRICE_UNIT_LABELS.get(unit, unit),
+        "median_deviation": result["deviation_percent"],
     }
 
 
@@ -272,22 +283,26 @@ def build_receipt_price_analysis(conn, receipt_items):
             continue
 
         rows = conn.execute(f"""
-            SELECT quantity, price, normalized_unit_price, normalized_price_unit
+            SELECT items.id, items.receipt_id, {PRODUCT_NAME_EXPR} AS effective_name,
+                   items.name, items.canonical_name, items.normalized_name,
+                   receipts.store, receipts.date, items.quantity, items.price,
+                   items.line_total, items.unit_price, items.quantity_unit,
+                   items.package_size, items.package_unit,
+                   items.normalized_unit_price, items.normalized_price_unit,
+                   items.price_parse_source, items.price_parse_confidence
             FROM items
+            JOIN receipts ON receipts.id = items.receipt_id
             WHERE {PRODUCT_NAME_EXPR} = ?
-              AND quantity > 0
-              AND price > 0
-            ORDER BY id
+            ORDER BY receipts.date, items.receipt_id, items.id
         """, (name,)).fetchall()
-
-        by_unit = {}
-        legacy = []
-        for quantity, price, normalized_price, normalized_unit in rows:
-            if normalized_price and normalized_unit and normalized_unit != "unknown":
-                by_unit.setdefault(normalized_unit, []).append(float(normalized_price))
-            if quantity and price:
-                legacy.append(float(price) / float(quantity))
-        histories[name] = {"by_unit": by_unit, "legacy": legacy}
+        columns = (
+            "id", "receipt_id", "effective_name", "name", "canonical_name",
+            "normalized_name", "store", "date", "quantity", "price",
+            "line_total", "unit_price", "quantity_unit", "package_size",
+            "package_unit", "normalized_unit_price", "normalized_price_unit",
+            "price_parse_source", "price_parse_confidence",
+        )
+        histories[name] = [dict(zip(columns, row)) for row in rows]
 
     summary = {
         "total_items": len(receipt_items),
@@ -297,33 +312,24 @@ def build_receipt_price_analysis(conn, receipt_items):
     }
 
     for item in receipt_items:
-        quantity = float(item["quantity"] or 0)
-        price = float(item["price"] or 0)
-        history = histories.get(item.get("display_name") or item["name"], {"by_unit": {}, "legacy": []})
-        normalized_unit = item.get("normalized_price_unit")
-        normalized_price = item.get("normalized_unit_price")
-        if normalized_price and normalized_unit and normalized_unit != "unknown":
-            unit_prices = history["by_unit"].get(normalized_unit, [])
-            current_price = float(normalized_price)
-            basis = normalized_unit
-        else:
-            unit_prices = history["legacy"]
-            current_price = price / quantity if quantity else 0
-            basis = "legacy"
-
-        if quantity <= 0 or price <= 0 or len(unit_prices) < 3:
+        history = histories.get(item.get("display_name") or item["name"], [])
+        current = next((row for row in history if row["id"] == item["id"]), None)
+        result = (
+            evaluate_price_deviation(current, history)
+            if current is not None
+            else {"status": "INSUFFICIENT_HISTORY"}
+        )
+        if result["status"] == "INSUFFICIENT_HISTORY":
             item["price_status"] = None
+            item["price_evidence"] = build_price_evidence_presentation(result)
             summary["insufficient"] += 1
             continue
 
-        median_price = median(unit_prices)
-        deviation = ((current_price - median_price) / median_price) * 100 if median_price else 0
-
-        if current_price <= median_price * 0.9:
+        if result["status"] == "CHEAPER_THAN_USUAL":
             label = "🟢 Выгодно"
             kind = "cheap"
             summary["cheap"] += 1
-        elif current_price >= median_price * 1.15:
+        elif result["status"] == "MORE_EXPENSIVE_THAN_USUAL":
             label = "🔴 Дорого"
             kind = "expensive"
             summary["expensive"] += 1
@@ -334,17 +340,18 @@ def build_receipt_price_analysis(conn, receipt_items):
         item["price_status"] = {
             "label": label,
             "kind": kind,
-            "current_price": round(current_price, 2),
-            "median_price": round(median_price, 2),
-            "basis": basis,
-            "deviation": round(deviation, 1),
+            "current_price": round(result["current_normalized_price"], 2),
+            "median_price": round(result["historical_median"], 2),
+            "basis": result["normalized_price_unit"],
+            "deviation": result["deviation_percent"],
             "tooltip": (
-                f"Текущая цена: {current_price:.2f} €\n"
-                f"Медианная цена: {median_price:.2f} €\n"
-                f"Сравнение: {basis}\n"
-                f"Отклонение: {deviation:+.1f}%"
+                f"Текущая цена: {result['current_normalized_price']:.2f} €\n"
+                f"Медианная цена: {result['historical_median']:.2f} €\n"
+                f"Сравнение: {result['normalized_price_unit']}\n"
+                f"Отклонение: {result['deviation_percent']:+.1f}%"
             ),
         }
+        item["price_evidence"] = None
 
     return summary
 
@@ -443,7 +450,12 @@ def init_routes(app):
                         unit_price,
                         paid_total,
                     ),
-                    "category": normalize_category_name(category),
+                    "category": category_for_reporting(category),
+                    "legacy_category": (
+                        str(category).strip()
+                        if category and str(category).strip().lower() not in CANONICAL_CATEGORIES
+                        else None
+                    ),
                     "category_source": category_source or "rule",
                     "category_source_label": source_label(category_source),
                     "normalized_unit_price": normalized_unit_price,
@@ -489,6 +501,9 @@ def init_routes(app):
         new_category = request.form.get("new_category", "").strip()
         category = normalize_category_name(new_category or request.form.get("category"))
         scope = request.form.get("category_scope", "product")
+        if category not in CANONICAL_CATEGORIES:
+            flash("Выберите категорию из списка")
+            return redirect(request.referrer or url_for("index"))
 
         with get_connection() as conn:
             row = conn.execute("""
@@ -609,7 +624,12 @@ def init_routes(app):
 
     @app.route("/analytics")
     def analytics():
-        return render_template("analytics.html", category_options=get_category_options())
+        selected_category = normalize_category_name(request.args.get("category")) if request.args.get("category") else ""
+        return render_template(
+            "analytics.html",
+            category_options=get_category_options(),
+            selected_category=selected_category,
+        )
 
     @app.route("/analytics/data")
     def analytics_data():
@@ -624,8 +644,6 @@ def init_routes(app):
     @app.route("/analytics/item_trend")
     def item_trend():
         item = request.args.get("item", "").strip()
-        if not item:
-            return jsonify({"labels": [], "values": []})
         return jsonify(get_item_trend(item))
 
     @app.route("/autocomplete/item_names")
@@ -639,11 +657,23 @@ def init_routes(app):
             cursor.execute(f"""
                 SELECT DISTINCT {PRODUCT_NAME_EXPR} AS product_name
                 FROM items
-                WHERE ({PRODUCT_NAME_EXPR} LIKE ? OR items.name LIKE ?)
-                ORDER BY LOWER({PRODUCT_NAME_EXPR})
+                WHERE ({PRODUCT_NAME_EXPR} LIKE ?
+                   OR items.name LIKE ?
+                   OR items.normalized_name LIKE ?)
+                ORDER BY CASE WHEN {PRODUCT_NAME_EXPR} = ? THEN 0 ELSE 1 END,
+                         LOWER({PRODUCT_NAME_EXPR})
                 LIMIT 10
-            """, (f"%{query}%", f"%{query}%"))
-            names = [row[0] for row in cursor.fetchall()]
+            """, (f"%{query}%", f"%{query}%", f"%{query}%", query))
+            names = [row[0] for row in cursor.fetchall() if row[0] and row[0].strip()]
+
+        if request.args.get("details") == "1":
+            return jsonify([
+                {
+                    "name": name,
+                    "profile_url": url_for("item_profile", name=name),
+                }
+                for name in names
+            ])
 
         return jsonify(names)
 
@@ -810,6 +840,9 @@ def init_routes(app):
         if not product_key:
             flash("Товарная группа не найдена")
             return redirect(url_for("product_review", **return_args))
+        if category not in CANONICAL_CATEGORIES:
+            flash("Выберите категорию из списка")
+            return redirect(url_for("product_review", **return_args))
 
         with get_connection() as conn:
             upsert_category_rule(conn, product_key, category)
@@ -869,7 +902,10 @@ def init_routes(app):
                        items.package_size, items.package_unit, items.normalized_unit_price,
                        items.normalized_price_unit, items.price_parse_confidence,
                        (items.quantity > 0 AND items.unit_price IS NOT NULL
-                        AND ROUND(ABS(items.quantity * items.unit_price - COALESCE(items.line_total, items.price)), 4) > 0.02)
+                        AND ROUND(ABS(items.quantity * items.unit_price - COALESCE(items.line_total, items.price)), 4) > 0.02),
+                       items.id, items.normalized_name, items.canonical_name,
+                       items.category, items.category_source, items.price_parse_source,
+                       items.price, items.line_total
                 FROM items
                 JOIN receipts ON receipts.id = items.receipt_id
                 WHERE {" AND ".join(conditions)}
@@ -877,19 +913,157 @@ def init_routes(app):
                 LIMIT ?
             """, (limit,)).fetchall()
 
+        row_policies = []
+        for row in rows:
+            row_policies.append(classify_price_correction({
+                "id": row[14],
+                "receipt_id": row[1],
+                "name": row[0],
+                "normalized_name": row[15],
+                "canonical_name": row[16],
+                "category": row[17],
+                "category_source": row[18],
+                "quantity": row[4],
+                "price": row[20],
+                "line_total": row[21],
+                "unit_price": row[7],
+                "quantity_unit": row[5],
+                "package_size": row[8],
+                "package_unit": row[9],
+                "normalized_unit_price": row[10],
+                "normalized_price_unit": row[11],
+                "price_parse_source": row[19],
+                "price_parse_confidence": row[12],
+                "store": row[2],
+                "date": row[3],
+            }))
+
         return render_template(
             "price_data_quality.html",
             summary=summary,
             rows=rows,
             issue_filter=issue_filter,
             limit=limit,
+            row_policies=row_policies,
         )
 
-    @app.route("/item/<name>")
+    @app.route("/data-quality/prices/<int:item_id>/correct", methods=["GET", "POST"])
+    def price_correction(item_id):
+        issue_filter = request.args.get("filter", "all").strip()
+        if issue_filter not in {"all", "unknown", "low_confidence", "missing_package", "suspicious"}:
+            issue_filter = "all"
+        try:
+            limit = min(max(int(request.args.get("limit", 50)), 10), 200)
+        except ValueError:
+            limit = 50
+        return_args = {"filter": issue_filter, "limit": limit}
+
+        def load_row():
+            with get_connection() as conn:
+                conn.row_factory = sqlite3.Row
+                stored = conn.execute(
+                    """
+                    SELECT items.*, receipts.store, receipts.date
+                    FROM items JOIN receipts ON receipts.id = items.receipt_id
+                    WHERE items.id = ?
+                    """,
+                    (item_id,),
+                ).fetchone()
+            return dict(stored) if stored is not None else None
+
+        row = load_row()
+        if row is None:
+            abort(404)
+        policy = classify_price_correction(row)
+        proposed = {
+            "quantity_unit": row.get("quantity_unit") or "unknown",
+            "package_size": row.get("package_size"),
+            "package_unit": row.get("package_unit") or "unknown",
+        }
+        preview = None
+        preview_token = None
+        error = None
+        status = 200
+
+        if request.method == "POST":
+            proposed = {
+                "quantity_unit": request.form.get("quantity_unit", ""),
+                "package_size": request.form.get("package_size", ""),
+                "package_unit": request.form.get("package_unit", "unknown"),
+            }
+            action = request.form.get("action")
+            if action == "preview":
+                try:
+                    preview = build_correction_preview(row, proposed)
+                    serializer = URLSafeTimedSerializer(
+                        current_app.secret_key,
+                        salt="price-correction-v1",
+                    )
+                    preview_token = serializer.dumps(correction_token_payload(preview))
+                    proposed = preview["proposed"]
+                except CorrectionError as exc:
+                    error = str(exc)
+                    status = 422
+            elif action == "apply":
+                try:
+                    serializer = URLSafeTimedSerializer(
+                        current_app.secret_key,
+                        salt="price-correction-v1",
+                    )
+                    payload = serializer.loads(
+                        request.form.get("preview_token", ""),
+                        max_age=3600,
+                    )
+                    with get_connection() as conn:
+                        apply_price_correction(conn, item_id, payload, proposed)
+                        conn.commit()
+                    flash("Price evidence исправлено; очередь и downstream views пересчитаны")
+                    return redirect(url_for("price_data_quality", **return_args))
+                except BadSignature:
+                    error = "Предпросмотр недействителен; создайте новый"
+                    status = 409
+                except CorrectionError as exc:
+                    error = str(exc)
+                    status = 409
+                except sqlite3.Error:
+                    error = "Не удалось применить исправление; данные не изменены"
+                    status = 500
+                row = load_row()
+                policy = classify_price_correction(row)
+            else:
+                error = "Неизвестное действие"
+                status = 400
+
+        current_model = derive_price_data(
+            name=row.get("name") or "",
+            normalized_name=row.get("normalized_name"),
+            quantity=row.get("quantity"),
+            line_total=row.get("line_total"),
+            unit_price=row.get("unit_price"),
+            quantity_unit=row.get("quantity_unit"),
+            package_size=row.get("package_size"),
+            package_unit=row.get("package_unit"),
+            source=row.get("price_parse_source") or "derived",
+        )
+        return render_template(
+            "price_correction.html",
+            row=row,
+            policy=policy,
+            proposed=proposed,
+            preview=preview,
+            preview_token=preview_token,
+            current_warnings=current_model.warnings,
+            return_args=return_args,
+            error=error,
+        ), status
+
+    @app.route("/item/<path:name>")
     def item_profile(name):
-        decoded_name = unquote(name)
+        decoded_name = name
 
         with get_connection() as conn:
+            effective_name = resolve_effective_product_identity(conn, decoded_name)
+            product_name = effective_name or decoded_name
             cursor = conn.cursor()
             cursor.execute(f"""
                 SELECT receipts.date, receipts.store, items.quantity, items.price,
@@ -900,39 +1074,60 @@ def init_routes(app):
                        items.price_parse_source, items.price_parse_confidence
                 FROM items
                 JOIN receipts ON items.receipt_id = receipts.id
-                WHERE ({PRODUCT_NAME_EXPR} = ? OR items.name = ?)
-                ORDER BY receipts.date
-            """, (decoded_name, decoded_name))
+                WHERE {PRODUCT_NAME_EXPR} = ?
+                ORDER BY receipts.date, items.id
+            """, (product_name,))
             rows = cursor.fetchall()
 
             cursor.execute(f"""
-                SELECT
-                    ROUND(AVG(CASE WHEN quantity > 0 THEN price / quantity ELSE NULL END), 2),
-                    ROUND(MIN(CASE WHEN quantity > 0 THEN price / quantity ELSE NULL END), 2),
-                    ROUND(MAX(CASE WHEN quantity > 0 THEN price / quantity ELSE NULL END), 2),
-                    SUM(quantity),
-                    ROUND(SUM(price), 2)
+                SELECT ROUND(SUM(COALESCE(line_total, price)), 2)
                 FROM items
-                WHERE ({PRODUCT_NAME_EXPR} = ? OR items.name = ?)
-            """, (decoded_name, decoded_name))
+                WHERE {PRODUCT_NAME_EXPR} = ?
+            """, (product_name,))
             stats = cursor.fetchone()
 
             cursor.execute(f"""
-                SELECT receipts.store, COUNT(*), ROUND(SUM(items.price), 2)
+                SELECT receipts.store, COUNT(*),
+                       ROUND(SUM(COALESCE(items.line_total, items.price)), 2)
                 FROM items
                 JOIN receipts ON items.receipt_id = receipts.id
-                WHERE ({PRODUCT_NAME_EXPR} = ? OR items.name = ?)
+                WHERE {PRODUCT_NAME_EXPR} = ?
                 GROUP BY receipts.store
-            """, (decoded_name, decoded_name))
+            """, (product_name,))
             per_store = cursor.fetchall()
 
             cursor.execute(f"""
                 SELECT DISTINCT items.name
                 FROM items
-                WHERE ({PRODUCT_NAME_EXPR} = ? OR items.name = ?)
+                WHERE {PRODUCT_NAME_EXPR} = ?
                 ORDER BY LOWER(items.name)
-            """, (decoded_name, decoded_name))
+            """, (product_name,))
             aliases = [row[0] for row in cursor.fetchall()]
+
+            cursor.execute(f"""
+                SELECT items.id, items.receipt_id, {PRODUCT_NAME_EXPR} AS effective_name,
+                       items.name, items.canonical_name, items.normalized_name,
+                       receipts.store, receipts.date,
+                       items.quantity, items.price, items.line_total, items.unit_price,
+                       items.quantity_unit, items.package_size, items.package_unit,
+                       items.normalized_unit_price, items.normalized_price_unit,
+                       items.price_parse_source, items.price_parse_confidence
+                FROM items
+                JOIN receipts ON items.receipt_id = receipts.id
+                WHERE {PRODUCT_NAME_EXPR} = ?
+                ORDER BY receipts.date, items.id
+            """, (product_name,))
+            comparison_columns = (
+                "id", "receipt_id", "effective_name", "name", "canonical_name", "normalized_name",
+                "store", "date", "quantity", "price", "line_total", "unit_price",
+                "quantity_unit", "package_size", "package_unit",
+                "normalized_unit_price", "normalized_price_unit",
+                "price_parse_source", "price_parse_confidence",
+            )
+            comparison_rows = [
+                dict(zip(comparison_columns, row))
+                for row in cursor.fetchall()
+            ]
             category_options = get_category_options(conn)
 
         latest_price_model = None
@@ -952,11 +1147,15 @@ def init_routes(app):
 
         return render_template(
             "item.html",
-            name=decoded_name,
+            name=product_name,
             rows=rows,
             stats=stats,
             per_store=per_store,
-            price_evaluation=build_price_evaluation(rows),
+            price_evaluation=build_price_evaluation(
+                comparison_rows[-1] if comparison_rows else None,
+                comparison_rows,
+            ),
+            store_comparison=build_store_price_comparison(comparison_rows),
             latest_price_model=latest_price_model,
             category_options=category_options,
             aliases=aliases,

@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block title %}Исправление price evidence{% endblock %}
+{% block body_class %}review-page price-correction-page{% endblock %}
+{% block content %}
+{% set unit_labels = {"piece": "шт.", "kg": "кг", "g": "г", "l": "л", "ml": "мл", "unknown": "неизвестно"} %}
+{% set package_labels = {"g": "г", "ml": "мл", "piece": "шт.", "unknown": "не указана"} %}
+{% set normalized_labels = {"eur_per_kg": "€/кг", "eur_per_l": "€/л", "eur_per_piece": "€/шт.", "unknown": "не рассчитана"} %}
+{% set source_labels = {"parser": "Parser evidence", "package_name": "Размер из названия", "weighted_inference": "Весовая арифметика", "inferred_piece": "Неподтверждённая штука", "manual_correction": "Ручная structured correction", "rejected": "Отклонено моделью", "unresolved": "Не определено"} %}
+
+<article class="price-correction-workspace" aria-labelledby="price-correction-title">
+    <header class="page-header review-page-header">
+        <div>
+            <a href="{{ url_for('price_data_quality', **return_args) }}">← К качеству цен</a>
+            <h1 id="price-correction-title">Исправление price evidence</h1>
+            <p>Одна строка, только structured denominator/package evidence. Исходные финансовые данные не редактируются.</p>
+        </div>
+    </header>
+
+    {% if error %}
+        <div class="alert alert-danger" role="alert">{{ error }}</div>
+    {% endif %}
+
+    <section class="card price-correction-source" aria-labelledby="correction-source-title">
+        <div class="card-body">
+            <h2 id="correction-source-title">Исходная строка</h2>
+            <h3>{{ row.name }}</h3>
+            <p>{{ row.store or "Магазин не указан" }} · {{ row.date or "Дата не указана" }}</p>
+            <dl class="correction-evidence-grid">
+                <div><dt>Количество</dt><dd>{{ row.quantity }} {{ unit_labels.get(row.quantity_unit or "unknown", row.quantity_unit or "неизвестно") }}</dd></div>
+                <div><dt>Оплачено</dt><dd>{{ "%.2f"|format(row.line_total) if row.line_total is not none else "не указано" }} €</dd></div>
+                <div><dt>За единицу</dt><dd>{{ "%.4f"|format(row.unit_price) if row.unit_price is not none else "не рассчитано" }} €</dd></div>
+                <div><dt>Упаковка</dt><dd>{% if row.package_size is not none %}{{ row.package_size }} {{ package_labels.get(row.package_unit, row.package_unit) }}{% else %}не указана{% endif %}</dd></div>
+                <div><dt>Нормализованная цена</dt><dd>{% if row.normalized_unit_price is not none %}{{ "%.4f"|format(row.normalized_unit_price) }} {{ normalized_labels.get(row.normalized_price_unit, row.normalized_price_unit) }}{% else %}не рассчитана{% endif %}</dd></div>
+                <div><dt>Источник / confidence</dt><dd>{{ source_labels.get(row.price_parse_source, row.price_parse_source or "не определён") }} · {% if row.price_parse_confidence is not none %}{{ "%.0f"|format(row.price_parse_confidence * 100) }}%{% else %}—{% endif %}</dd></div>
+            </dl>
+            {% if current_warnings %}<p><strong>Диагностика:</strong> {{ current_warnings|join(", ") }}</p>{% endif %}
+            <p><a href="{{ url_for('view_receipt', receipt_id=row.receipt_id) }}">Открыть структурированные данные чека #{{ row.receipt_id }}</a></p>
+            <p class="text-muted">PDF/page preview здесь недоступен. Сверьте исходный чек вне приложения перед ручным подтверждением.</p>
+        </div>
+    </section>
+
+    {% if policy.classification == "CORRECTABLE_V1" %}
+    <section class="card price-correction-form" aria-labelledby="correction-form-title">
+        <div class="card-body">
+            <h2 id="correction-form-title">Structured correction</h2>
+            <form method="post" action="{{ url_for('price_correction', item_id=row.id, **return_args) }}">
+                <input type="hidden" name="action" value="preview">
+                <div class="correction-controls">
+                    <label>Единица количества
+                        <select class="form-select" name="quantity_unit" required>
+                            <option value=""{% if not proposed.quantity_unit or proposed.quantity_unit == "unknown" %} selected{% endif %} disabled>Выберите</option>
+                            {% for value, label in [("piece", "шт."), ("kg", "кг"), ("g", "г"), ("l", "л"), ("ml", "мл")] %}
+                                <option value="{{ value }}"{% if proposed.quantity_unit == value %} selected{% endif %}>{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                    </label>
+                    <label>Размер упаковки <span class="text-muted">в г/мл/шт.</span>
+                        <input class="form-control" type="number" min="0.001" step="0.001" name="package_size" value="{{ proposed.package_size if proposed.package_size is not none else '' }}">
+                    </label>
+                    <label>Единица упаковки
+                        <select class="form-select" name="package_unit">
+                            {% for value, label in [("unknown", "Не указана"), ("g", "г"), ("ml", "мл"), ("piece", "шт.")] %}
+                                <option value="{{ value }}"{% if proposed.package_unit == value %} selected{% endif %}>{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                    </label>
+                </div>
+                <button class="btn btn-primary" type="submit">Предпросмотр</button>
+            </form>
+        </div>
+    </section>
+    {% else %}
+        <section class="alert alert-warning" aria-labelledby="not-correctable-title">
+            <h2 id="not-correctable-title">Исправление v1 недоступно</h2>
+            <p>{{ policy.reason }}</p>
+        </section>
+    {% endif %}
+
+    {% if preview %}
+    <section class="card price-correction-preview" aria-labelledby="correction-preview-title">
+        <div class="card-body">
+            <h2 id="correction-preview-title">После исправления</h2>
+            <dl class="correction-evidence-grid">
+                <div><dt>Единица количества</dt><dd>{{ unit_labels.get(preview.after.quantity_unit, preview.after.quantity_unit) }}</dd></div>
+                <div><dt>Упаковка</dt><dd>{% if preview.after.package_size is not none %}{{ preview.after.package_size }} {{ package_labels.get(preview.after.package_unit, preview.after.package_unit) }}{% else %}не указана{% endif %}</dd></div>
+                <div><dt>Нормализованная цена</dt><dd>{{ "%.4f"|format(preview.after.normalized_unit_price) }} {{ normalized_labels.get(preview.after.normalized_price_unit, preview.after.normalized_price_unit) }}</dd></div>
+                <div><dt>Источник</dt><dd>Ручная structured correction</dd></div>
+                <div><dt>Policy confidence</dt><dd>85% — ручное подтверждение и прохождение structural guards</dd></div>
+                <div><dt>Диагностика</dt><dd>{{ preview.after.warnings|join(", ") if preview.after.warnings else "Блокирующих диагностик нет" }}</dd></div>
+                <div><dt>Historical deviation</dt><dd>{{ "Пригодно" if preview.eligible_after else "Непригодно" }}{% if preview.eligible_after and not preview.eligible_before %} · улучшено{% endif %}</dd></div>
+                <div><dt>Store Comparison / Analytics trend</dt><dd>{{ "Пригодно" if preview.eligible_after else "Непригодно" }}</dd></div>
+            </dl>
+            <p><strong>Будут изменены только:</strong> unit price, quantity unit, package evidence, normalized price, manual provenance и policy confidence.</p>
+            <form method="post" action="{{ url_for('price_correction', item_id=row.id, **return_args) }}">
+                <input type="hidden" name="action" value="apply">
+                <input type="hidden" name="preview_token" value="{{ preview_token }}">
+                <input type="hidden" name="quantity_unit" value="{{ preview.proposed.quantity_unit }}">
+                <input type="hidden" name="package_size" value="{{ preview.proposed.package_size if preview.proposed.package_size is not none else '' }}">
+                <input type="hidden" name="package_unit" value="{{ preview.proposed.package_unit }}">
+                <button class="btn btn-danger" type="submit">Применить исправление</button>
+            </form>
+        </div>
+    </section>
+    {% endif %}
+</article>
+{% endblock %}
