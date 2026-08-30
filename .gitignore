@@ -60,3 +60,19 @@ ruvector.db
 .idea/
 .DS_Store
 Thumbs.db
+
+@'
+
+# Local agent / internal project tooling
+.agents/
+.claude-flow/
+.codex/
+AGENTS.md
+CURRENT_CONTEXT.md
+DESIGN_SYSTEM.md
+IMPLEMENTATION_PLAN.md
+SCREEN_SPECS.md
+VISUAL_CONSTITUTION.md
+skills-lock.json
+docs/Ruflo.md
+'@ | Add-Content .gitignore
