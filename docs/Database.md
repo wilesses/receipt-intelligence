@@ -104,7 +104,7 @@ CREATE INDEX idx_receipts_store ON receipts(store);
 | `package_unit` | `TEXT` | да | нет | нет | Единица упаковки: `ml`, `g`, `piece`, `unknown`. |
 | `normalized_unit_price` | `REAL` | да | нет | нет | Нормализованная цена для сравнения: EUR/L, EUR/kg или EUR/piece. |
 | `normalized_price_unit` | `TEXT` | да | нет | нет | Тип нормализованной цены: `eur_per_l`, `eur_per_kg`, `eur_per_piece`, `unknown`. |
-| `price_parse_source` | `TEXT` | да | нет | нет | Источник интерпретации цены: `parser`, `package_name`, `weighted_inference`, `inferred_piece`, `service_line`, `rejected` или `unresolved`. |
+| `price_parse_source` | `TEXT` | да | нет | нет | Источник интерпретации цены: `parser`, `package_name`, `weighted_inference`, `manual_correction`, `inferred_piece`, `service_line`, `rejected` или `unresolved`. |
 | `price_parse_confidence` | `REAL` | да | нет | нет | Уверенность Price Model. |
 | `category` | `TEXT` | да | нет | нет | Категория товара. Обычно назначается `categorize_from_name()`. |
 | `canonical_name` | `TEXT` | да | нет | нет | Ручное объединенное название товара. Используется аналитикой вместо `name`, если заполнено. |
@@ -180,12 +180,8 @@ CREATE INDEX idx_items_normalized_price_unit ON items(normalized_price_unit);
 
 - `receipt_id`: загрузка позиций конкретного чека.
 - `name`: поиск, отображение исходного названия, автодополнение.
-- `canonical_name`: объединение похожих товаров. В аналитике используется выражение:
-- `normalized_name`: поиск похожих товаров в `app/product_matcher.py`.
-
-```sql
-COALESCE(NULLIF(items.canonical_name, ''), items.name)
-```
+- `canonical_name`: ручное объединение похожих товаров; executable canonical-or-raw contract находится в `app/product_identity.py`.
+- `normalized_name`: поиск похожих товаров и Suggestions; не user-facing identity.
 
 - `quantity`: расчет цены за единицу.
 - `price`: сумма расходов, графики, топ товаров, профиль товара.
@@ -227,9 +223,16 @@ Confidence отражает качество evidence:
 - `0.85` — однозначный размер упаковки извлечен из названия (`package_name`);
 - `0.75` — весовая единица выведена только при согласованности `quantity * unit_price ~= line_total` (`weighted_inference`);
 - `0.70` — предположение поштучной покупки (`inferred_piece`), не примененное к основной базе;
+- `0.85` при `manual_correction` — policy confidence: пользователь подтвердил structured evidence, прошедшее общие structural guards; это не вероятность истинности;
 - `NULL` — нормализованная цена не рассчитана.
 
 Служебные позиции (депозит, упаковка, бумажные и многоразовые пакеты, подтвержденные кассовые строки) получают `service_line` и остаются без нормализованной цены. Узкие правила не меняют исходную категорию. Multipack, неоднозначные упаковки, parser contamination и malformed data отклоняются или остаются unresolved.
+
+Price Quality может исправить одну `CORRECTABLE_V1` строку без изменения schema. Редактируются только `quantity_unit`, `package_size`, `package_unit`; успешный apply пересчитывает и обновляет `unit_price`, `normalized_unit_price`, `normalized_price_unit`, `price_parse_source`, `price_parse_confidence`. `name`, `canonical_name`, `normalized_name`, `receipt_id`, `quantity`, `price`, `line_total`, `category` и `category_source` остаются неизменными.
+
+Preview не открывает write transaction. Signed token является integrity/stale-state mechanism и содержит `item_id`, hash before-state, proposed fields и projected derived fields. Apply выполняет `BEGIN IMMEDIATE`, reload строки, повторный `derive_price_data()`, сравнение свежей projection с token и UPDATE ровно одной строки с optimistic before-state predicates. Значения derived fields из token напрямую не сохраняются.
+
+Missing `line_total`, arithmetic mismatch, unresolved multipack, service/parser contamination и любой remaining blocking warning исключают manual apply. Stale/deleted rows, измененное proposal и SQLite errors откатываются.
 
 Backfill существующих данных находится в `app/backfill_price_data.py`:
 
@@ -392,7 +395,7 @@ UPDATE items
 SET canonical_name = ?
 WHERE name IN (...)
    OR canonical_name IN (...)
-   OR COALESCE(NULLIF(items.canonical_name, ''), items.name) IN (...);
+   OR <shared effective identity expression> IN (...);
 ```
 
 ### Ручная смена категории

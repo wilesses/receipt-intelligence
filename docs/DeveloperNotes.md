@@ -27,6 +27,7 @@
 - `app/importer.py` - PDF/OCR/import pipeline.
 - `app/receipt_parser.py` - Maxima/Rimi parsing.
 - `app/product_normalizer.py` - `normalized_name` и признаки упаковки.
+- `app/product_identity.py` - единственный canonical-or-raw user-facing identity contract и его SQL/row helpers.
 - `app/product_matcher.py` - RapidFuzz suggestions без автоматического merge.
 - `app/price_model.py` - расчет `line_total`, `unit_price`, упаковки и normalized price.
 - `app/backfill_price_data.py` - dry-run/backfill новых ценовых полей.
@@ -106,7 +107,11 @@ return jsonify(data)
 
 Если аналитика относится к одному товару, смотреть `get_item_trend()` и `item.html`.
 
-Если аналитика относится к чеку, смотреть `build_receipt_price_analysis()` и `receipt.html`.
+Local Research не должен брать список из `get_analytics_data()["top"]`. Использовать существующий `/autocomplete/item_names`: он ищет по shared effective identity, raw `items.name` и `normalized_name`, но возвращает только distinct effective identities. Default response остаётся списком имён; `details=1` возвращает `{name, profile_url}`, где URL строится через `url_for("item_profile", name=...)`. UI обязан хранить выбранный результат отдельно от текста input и сразу инвалидировать выбор при редактировании. Route Product Dossier использует `<path:name>`; Flask уже декодирует path parameter, поэтому повторный `unquote()` применять нельзя.
+
+Если нужен статус normalized price относительно истории, начинать с `app/price_deviation.py:evaluate_price_deviation()`. Receipt Detail адаптирует его в `build_receipt_price_analysis()`, Product Dossier — в `build_price_evaluation()`, Home Month Story — в `_story_item_candidates()`. Не добавлять новый median/threshold/legacy fallback в consumer.
+
+Для объяснения `INSUFFICIENT_HISTORY` в пользовательском интерфейсе использовать `app/price_deviation_presentation.py:build_price_evidence_presentation()`. Этот adapter является единственным mapping machine reason → `NOT_ENOUGH_HISTORY`, `PRICE_NOT_COMPARABLE`, `PRODUCT_IDENTITY_UNCERTAIN` или `EVIDENCE_NEEDS_REVIEW`; localized copy и progress не следует дублировать в routes/templates. `eligible_prior_count` — число пригодных prior observations того же identity/unit за 180 дней, а не безусловное число прошлых покупок. Home намеренно не показывает эти объяснения.
 
 ## Как работает Price & Quantity Model
 
@@ -129,7 +134,7 @@ return jsonify(data)
 - штуки без упаковки могут стать `inferred_piece`, но этот источник не применен к основной базе;
 - неизвестная единица без упаковки -> `unknown`.
 
-Confidence: parser `0.95`, `package_name` `0.85`, `weighted_inference` `0.75`, `inferred_piece` `0.70`, unresolved `NULL`. `weighted_inference` допустим только при `quantity * unit_price ~= line_total` с допуском округления. Служебные строки распознаются узкими правилами, получают `service_line` и остаются без normalized price; категория не меняется.
+Confidence: parser `0.95`, `package_name` `0.85`, `weighted_inference` `0.75`, `inferred_piece` `0.70`, unresolved `NULL`. Для `manual_correction` значение `0.85` является policy confidence: пользователь подтвердил structured evidence, прошедшее общие guards; это не вероятность истинности. `weighted_inference` допустим только при `quantity * unit_price ~= line_total` с допуском округления. Служебные строки распознаются узкими правилами, получают `service_line` и остаются без normalized price; категория не меняется.
 
 Selective backfill:
 
@@ -142,7 +147,24 @@ Dry-run является default. `--apply` без `--sources` отклоняе�
 
 Фактический selective backfill: 2184 строки (`package_name` 2179, `weighted_inference` 5), normalized units: 1664 `eur_per_kg`, 452 `eur_per_l`, 68 `eur_per_piece`. Повторный dry-run: 0 изменений. `inferred_piece`, `service_line`, rejected и unresolved не применялись; normalized price остается unresolved у 1094 строк. Полный apply не выполнялся.
 
-Экран `/data-quality/prices` только читает данные. Он не исправляет БД.
+Экран `/data-quality/prices` разрешает узкую коррекцию одной строки только для `CORRECTABLE_V1`: редактируются `quantity_unit`, `package_size`, `package_unit`; raw name/identity, quantity, price, line total, category и receipt не меняются. Missing line total, arithmetic mismatch, unresolved multipack, service/parser contamination и любой оставшийся blocking warning дают `NOT_CORRECTABLE_V1`.
+
+GET и preview не пишут в БД. Signed preview token используется только для integrity/stale-state: `item_id`, before-state hash, normalized proposed fields, projected derived fields. На apply обязательно заново загрузить row внутри `BEGIN IMMEDIATE`, проверить token/proposal, повторно вызвать `derive_price_data(source="manual_correction")` и использовать свежий результат. Derived fields из token не сохранять напрямую.
+
+Apply должен обновлять ровно одну строку с optimistic before-state predicates; stale/deleted/different proposal и SQLite error завершаются rollback. Разрешенные write fields: `unit_price`, `quantity_unit`, `package_size`, `package_unit`, `normalized_unit_price`, `normalized_price_unit`, `price_parse_source`, `price_parse_confidence`.
+
+Не добавлять generic item editor: расширять policy только отдельным проверенным решением для нового класса diagnostics.
+
+## Как работает product identity
+
+`app/product_identity.py` — единственный исполняемый контракт пользовательской идентичности товара:
+
+- непустой `canonical_name` является ручным authoritative override;
+- иначе identity равна raw receipt `name` без `normalized_name` fallback;
+- сначала разрешается exact effective identity, затем только один однозначный raw alias;
+- Dossier, Analytics, autocomplete, Home, deviation, Store Comparison, discovery и Merge используют общий helper.
+
+Category `get_product_key()` остается отдельным normalized rule-grouping contract и не является user-facing identity.
 
 ## Как работает Product Normalizer
 
@@ -176,12 +198,13 @@ Route `/products/suggestions` находится в `app/web/routes.py:product_s
 - агрегирует уникальные варианты товаров из `items`;
 - использует `normalized_name`, если поле заполнено;
 - если `normalized_name` пустой, вычисляет его из `items.name` на лету;
-- делает token buckets для shortlist;
-- считает RapidFuzz score через `fuzz.token_set_ratio()`;
+- строит matcher-only accent-folded форму из raw `name`, не меняя persisted `normalized_name`;
+- делает token buckets для shortlist по matcher-only токенам;
+- считает explainable RapidFuzz score как среднее `fuzz.token_set_ratio()` и `fuzz.token_sort_ratio()`;
 - показывает только score от `88`;
-- `95+` считается `high`, `88-94.99` считается `possible`.
+- `95+` считается `high` только при одинаковом наборе значимых matcher-токенов; остальные accepted pairs считаются `possible`.
 
-Hard guards блокируют пары с разным объемом, массой, процентом или явными разными вариантами вроде `zero/original`, `cheese/bacon`.
+Hard guards блокируют пары с разным объемом, массой, явным типом единицы, процентом, multipack signature, single-pack/multipack или разными corpus-backed вариантными признаками. Variant check симметричен: one-sided `zero`, `max`, flavor, quality grade, L/M egg size и проверенные corpus markers также блокируют unsafe merge suggestion. Multipack распознается из raw `name` для `x`/`х`/`×`; package economics не вычисляется.
 
 Страница не выполняет POST merge и не меняет `canonical_name`.
 
@@ -226,13 +249,19 @@ Read-only аудит запускается через `python -m app.audit_pars
 
 ## Как добавить категорию или правило
 
-Канонический список лежит в `app/category_keywords.py:CANONICAL_CATEGORIES`.
+Канонический список из 18 плоских категорий лежит в `app/category_keywords.py:CANONICAL_CATEGORIES`; sentinel — `UNRESOLVED_CATEGORY` (`прочее / требует решения`).
 
 Alias mapping лежит в `CATEGORY_ALIASES`.
 
-Фактические keyword-правила лежат в `CATEGORY_KEYWORDS`.
+`category_for_reporting()` оставляет canonical value без изменений, а известную старую persisted category на REVIEW/UNRESOLVED строке показывает как новый unresolved sentinel. Формы при этом отдельно показывают исходное сохраненное значение. Это слой совместимости, а не разрешение неоднозначной строки.
 
-Если новая категория может конфликтовать с существующими, порядок выбора задается в `PRIORITY`.
+Фактические keyword-правила лежат в `CATEGORY_KEYWORDS`. `*` в конце означает prefix одного токена или последнего токена фразы; обычная строка означает целый токен/фразу. Не добавляй unsafe substring или brand-only сигнал.
+
+`score_keyword_matches()` считает каждый keyword максимум один раз. `PRIORITY` задает semantic tie order; узкие conjunction guards покрывают baby age+form, frozen fries, instant noodles, service bags и burger buns. Product type сильнее flavour/ingredient; неоднозначность должна уйти в `UNRESOLVED_CATEGORY`, а не в правдоподобную категорию.
+
+`app/receipt_parser.py:categorize_item()` является wrapper общей `categorize_from_name()`. Вторую parser-классификацию не добавлять.
+
+Read-only shadow проверяется через `python -m app.audit_category_classifier_v2 --db data/receipts.db`. Основная оценка качества — cohort без exact raw-key rule. Exact-rule-covered расхождения допустимы: `add_receipt_with_items()` применяет правило позже и сохраняет `inherited`.
 
 UI-цвет категории находится в `app/web/app.py:category_color()`.
 
@@ -270,7 +299,7 @@ Route `/products/review` агрегирует группы из `items` и `rece
 - `app/product_matcher.py:_blocked()` - отвечает за безопасность предложений похожих товаров.
 - `app/price_model.py:derive_price_data()` - влияет на все новые ценовые поля при импорте и backfill.
 - `app/backfill_price_data.py` - default режим read-only; write требует явные `--apply --sources package_name,weighted_inference` и отдельное разрешение пользователя.
-- `PRODUCT_NAME_EXPR` в `app/web/routes.py` и `app/analytics_service.py` - влияет на аналитику, товары, профили и объединение.
+- `app/product_identity.py` - влияет на границы user-facing товаров в Dossier, Analytics, autocomplete, Home, deviation, Store Comparison, discovery и Merge.
 - `/products/merge` - массово обновляет `canonical_name`.
 - `app/gmail_fetcher.py:gmail_settings()` - влияет на то, какие письма и файлы будут импортированы.
 
@@ -282,15 +311,15 @@ Route `/products/review` агрегирует группы из `items` и `rece
 - Изменение категорий может изменить историческую аналитику после перекатегоризации.
 - Изменение manual product rule влияет на новые импорты этой товарной группы.
 - Изменение `canonical_name` меняет группировку товаров во всей аналитике.
-- Изменение `normalized_name` меняет только suggestions и будущий Product Engine, но не текущую аналитику.
-- Изменение `price` или `quantity` меняет цену за единицу, топ товаров и оценку выгодности.
-- Изменение `normalized_unit_price` или `normalized_price_unit` меняет сравнение цен на `/item/<name>` и `/receipt/<id>`, но не основные графики расходов.
+- Изменение `normalized_name` меняет Suggestions, поисковое совпадение и category `product_key`, но само по себе не объединяет user-facing identities.
+- Изменение `price`, `line_total` или `quantity` меняет spend-агрегаты и проверку арифметической согласованности, но не создаёт legacy price fallback.
+- Изменение `normalized_unit_price` или `normalized_price_unit` меняет historical-deviation выводы на Home, `/item/<name>`, `/receipt/<id>` и normalized Analytics item trend, но не Analytics spend.
 - Изменение схемы БД может не примениться к старой базе, если используется `CREATE TABLE IF NOT EXISTS`.
 - Фактическая старая БД может иметь constraints, отличные от новой схемы в коде.
 
 ## Что отсутствует в проекте
 
-- Миграционный инструмент не найден.
+- Общий schema migration framework отсутствует. Для единственной allowlist-миграции Category Taxonomy v2 есть узкий `app/apply_category_taxonomy_v2.py`; его нельзя использовать как keyword/backfill-инструмент.
 - Отдельный parser registry не найден.
 - Таблица аудита ручных изменений категорий не найдена.
 - Таблица ошибок категоризации не найдена.

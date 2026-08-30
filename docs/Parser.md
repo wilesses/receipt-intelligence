@@ -305,7 +305,9 @@ Measurement Parsing различает узкие формы:
 - age/package `1–36 + size g|ml`: `6+110g` и `6+ 110g` дают упаковку 110 g, возраст остается в имени;
 - `x`, `х`, `×` multipack остается unresolved с `multipack_unresolved`;
 - `45+ kg` не становится упаковкой 45000 g; fractional quantity с terminal `kg`/`l`, допустимым `2. šķ.` suffix и согласованной печатной арифметикой может получить `weighted_inference`;
-- warnings остаются transient; Price Quality независимо проверяет persisted арифметику.
+- warnings остаются transient; Price Quality независимо проверяет persisted арифметику;
+- one-row correction повторно вызывает `derive_price_data(source="manual_correction")`; `0.85` здесь означает policy confidence для вручную подтвержденного structured evidence, а не истинную уверенность;
+- manual correction не снимает arithmetic mismatch, unresolved multipack, service/parser contamination или другой blocking warning.
 
 Ручная загрузка:
 

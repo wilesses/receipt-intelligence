@@ -55,7 +55,7 @@ def extract_text_from_pdf(pdf_path: str | Path) -> str:
 
 def extract_text_with_ocr(pdf_path: str | Path) -> str:
     pdftoppm_path = find_executable("pdftoppm", [
-        r"C:\Users\bakla\.cache\codex-runtimes\codex-primary-runtime\dependencies\native\poppler\Library\bin\pdftoppm.exe",
+        str(Path.home() / '.cache' / 'codex-runtimes' / 'codex-primary-runtime' / 'dependencies' / 'native' / 'poppler' / 'Library' / 'bin' / 'pdftoppm.exe'),
     ])
     tesseract_path = find_executable("tesseract", [
         r"C:\Program Files\Tesseract-OCR\tesseract.exe",

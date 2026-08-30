@@ -15,22 +15,15 @@
 
 ## Общие правила аналитики
 
-Для группировки товаров используется выражение:
+User-facing товары группируются через `app/product_identity.py`. Контракт один: непустой persisted `canonical_name`, иначе raw receipt `items.name`. `effective_product_identity_sql()` и row helper переиспользуются в Analytics, Product Dossier, autocomplete, Home, deviation, Store Comparison, discovery и Merge.
 
-```sql
-COALESCE(NULLIF(items.canonical_name, ''), items.name)
-```
+`normalized_name` помогает искать и строить Suggestions, но не является identity и не объединяет товары автоматически. Category `app/category_rules.py:get_product_key()` намеренно использует отдельную normalized-группировку для правил категорий.
 
-Оно задано как `PRODUCT_NAME_EXPR` в:
-
-- `app/analytics_service.py`;
-- `app/web/routes.py`.
-
-Если `canonical_name` заполнен, аналитика считает товар по нему. Иначе используется исходный `items.name`.
+Точный effective identity разрешается первым. Raw alias принимается только если однозначно соответствует одной effective identity. Тренд и Dossier после разрешения используют exact equality, не `LIKE` и не объединяющий `OR name = ?`.
 
 Category Engine v2 не меняет формулы аналитики. Графики и KPI продолжают использовать `items.category`. После ручного изменения категории всей группы аналитика автоматически отражает новое значение, потому что обновляется та же колонка `items.category`.
 
-Price & Quantity Model v2 не меняет основные графики расходов: они продолжают использовать `items.price`. Новые поля `normalized_unit_price` и `normalized_price_unit` используются для сравнения цены на `/item/<name>` и `/receipt/<id>`, если для товара есть достаточно истории. Если нормализованных данных не хватает, код возвращается к legacy расчету `price / quantity`.
+Price & Quantity Model v2 не меняет основные графики расходов: они продолжают использовать `items.price`. Price intelligence и item trend используют только safe persisted `normalized_unit_price` с явным `normalized_price_unit`; legacy `price / quantity` fallback отсутствует.
 
 ## KPI
 
@@ -44,17 +37,12 @@ Price & Quantity Model v2 не меняет основные графики ра
 - расходы по категориям;
 - расходы по месяцам;
 - топ-10 товаров по сумме;
-- цена за единицу товара по месяцам;
-- средняя цена товара;
-- минимальная и максимальная цена товара;
-- всего куплено товара;
-- общая сумма по товару;
+- месячная медиана safe normalized price товара с явным €/kg, €/L или €/piece;
+- число eligible observations в каждой точке тренда;
+- общая оплаченная сумма по товару;
 - количество покупок товара по магазинам;
 - сумма товара по магазинам;
-- последняя цена товара;
-- последняя нормализованная цена товара, если она доступна;
-- медианная цена товара;
-- отклонение последней цены от средней и медианы;
+- последняя safe normalized price и её отклонение от медианы eligible prior history;
 - количество товаров в чеке;
 - количество позиций дешевле обычного;
 - количество позиций дороже обычного;
@@ -136,7 +124,7 @@ receipts.date >= ?
 receipts.date <= ?
 LOWER(receipts.store) = LOWER(?)
 items.category = ?
-(COALESCE(NULLIF(items.canonical_name, ''), items.name) LIKE ? OR items.name LIKE ?)
+(<shared effective identity expression> LIKE ? OR items.name LIKE ?)
 ```
 
 Расходы по категориям:
@@ -164,7 +152,7 @@ ORDER BY strftime('%Y-%m', receipts.date)
 Топ товаров:
 
 ```sql
-SELECT COALESCE(NULLIF(items.canonical_name, ''), items.name) AS product_name, SUM(items.price)
+SELECT <shared effective identity expression> AS product_name, SUM(items.price)
 FROM items
 JOIN receipts ON items.receipt_id = receipts.id
 {where_clause}
@@ -207,26 +195,26 @@ Route: `app/web/routes.py:item_trend()`.
 
 Функция: `app/analytics_service.py:get_item_trend(item_name)`.
 
-SQL:
+Поток:
 
-```sql
-SELECT strftime('%Y-%m', receipts.date) AS ym,
-       SUM(items.price) AS total,
-       SUM(items.quantity) AS qty
-FROM items
-JOIN receipts ON items.receipt_id = receipts.id
-WHERE (COALESCE(NULLIF(items.canonical_name, ''), items.name) LIKE ?
-       OR items.name LIKE ?)
-GROUP BY ym
-ORDER BY ym
-```
+1. `resolve_effective_product_identity()` разрешает exact identity или один однозначный raw alias.
+2. SQL выбирает все observations только через `WHERE <effective_identity> = ?` и сортирует `(date, receipt_id, item_id)`.
+3. `build_normalized_price_trend()` применяет `app.price_deviation.is_eligible_price_observation()`:
+   - положительная normalized EUR/kg, EUR/L или EUR/piece;
+   - допустимый source и confidence `>= 0.75`;
+   - согласованные quantity/unit price/line total в пределах €0.02;
+   - валидные date/store;
+   - без blocking diagnostics и unresolved identity.
+4. Python группирует eligible observations по календарному месяцу и считает медиану. JSON содержит `labels`, `values`, `observation_counts`, machine unit и явный `unit_label`.
 
-Python:
+Fail-closed состояния возвращают `status = insufficient` и пустые точки:
 
-- пропускает строки без `qty` или `total`;
-- считает `unit_price = total / qty`;
-- оставляет только `0 < unit_price <= 1000`;
-- округляет цену за единицу до 2 знаков.
+- неизвестный или неоднозначный товар;
+- нет eligible normalized history;
+- несовместимые denominators внутри identity;
+- нет observations с валидным месяцем.
+
+`price / quantity`, средняя по строкам и wildcard grouping здесь не используются.
 
 ## Страница `/item/<name>`
 
@@ -234,7 +222,7 @@ Python:
 
 Route: `app/web/routes.py:item_profile(name)`.
 
-Имя декодируется через `unquote(name)`.
+Flask декодирует `<path:name>` один раз; route не вызывает повторный `unquote()`.
 
 Шаблон: `app/web/templates/item.html`.
 
@@ -245,49 +233,38 @@ SQL:
 ```sql
 SELECT receipts.date, receipts.store, items.quantity, items.price,
        items.receipt_id, items.id, items.category, items.category_source, items.name,
-       COALESCE(NULLIF(items.canonical_name, ''), items.name) AS product_name,
+       <shared effective identity expression> AS product_name,
        items.normalized_unit_price, items.normalized_price_unit,
        items.line_total, items.unit_price, items.package_size, items.package_unit
 FROM items
 JOIN receipts ON items.receipt_id = receipts.id
-WHERE (COALESCE(NULLIF(items.canonical_name, ''), items.name) = ? OR items.name = ?)
+WHERE <shared effective identity expression> = ?
 ORDER BY receipts.date
 ```
 
-Используется для таблицы покупок, формы смены категории и оценки цены.
+Перед SQL route разрешает exact effective identity или один однозначный raw alias. История используется для Purchase Register, формы смены категории и shared price evaluation.
 
 ### Агрегаты товара
 
 SQL:
 
 ```sql
-SELECT
-    ROUND(AVG(CASE WHEN quantity > 0 THEN price / quantity ELSE NULL END), 2),
-    ROUND(MIN(CASE WHEN quantity > 0 THEN price / quantity ELSE NULL END), 2),
-    ROUND(MAX(CASE WHEN quantity > 0 THEN price / quantity ELSE NULL END), 2),
-    SUM(quantity),
-    ROUND(SUM(price), 2)
+SELECT ROUND(SUM(COALESCE(line_total, price)), 2)
 FROM items
-WHERE (COALESCE(NULLIF(items.canonical_name, ''), items.name) = ? OR items.name = ?)
+WHERE <shared effective identity expression> = ?
 ```
 
-Считается SQL:
-
-- средняя цена за единицу;
-- минимальная цена за единицу;
-- максимальная цена за единицу;
-- сумма количества;
-- сумма расходов.
+Summary показывает только общую оплаченную сумму. Legacy average/min/max `price / quantity` и неоднозначный total quantity удалены.
 
 ### Разрез по магазинам
 
 SQL:
 
 ```sql
-SELECT receipts.store, COUNT(*), ROUND(SUM(items.price), 2)
+SELECT receipts.store, COUNT(*), ROUND(SUM(COALESCE(items.line_total, items.price)), 2)
 FROM items
 JOIN receipts ON items.receipt_id = receipts.id
-WHERE (COALESCE(NULLIF(items.canonical_name, ''), items.name) = ? OR items.name = ?)
+WHERE <shared effective identity expression> = ?
 GROUP BY receipts.store
 ```
 
@@ -298,29 +275,24 @@ SQL:
 ```sql
 SELECT DISTINCT items.name
 FROM items
-WHERE (COALESCE(NULLIF(items.canonical_name, ''), items.name) = ? OR items.name = ?)
+WHERE <shared effective identity expression> = ?
 ORDER BY LOWER(items.name)
 ```
 
 ### Оценка текущей цены
 
-Функция: `app/web/routes.py:build_price_evaluation(rows)`.
+`build_price_evaluation(current_observation, observations)` адаптирует результат общего `app/price_deviation.py:evaluate_price_deviation()` для Dossier. Контракт:
 
-Python:
-
-- из каждой покупки считает `unit_price = price / quantity`;
-- если есть минимум 3 значения одной `normalized_price_unit`, использует `normalized_unit_price`;
-- иначе использует legacy `price / quantity`;
-- если точек меньше 3, возвращает `has_enough_data = False`;
-- считает среднюю, медианную, минимум, максимум, последнюю цену;
-- если последняя цена `<= median * 0.9`, статус `Выгодная цена`;
-- если последняя цена `>= median * 1.15`, статус `Дороже обычного`;
-- иначе статус `Обычная цена`;
-- считает отклонение от средней и медианы.
+- exact shared effective identity и тот же normalized-price eligibility;
+- медиана минимум трёх eligible prior observations того же denominator за 180 дней;
+- текущая строка не входит в baseline;
+- `<= -10%` cheaper, `>= +15%` more expensive, иначе normal;
+- без legacy fallback;
+- insufficient reason отображается через общий evidence-presentation adapter.
 
 ### Графики
 
-`item.html` загружает `/analytics/item_trend?item=<name>` и строит line chart цены за единицу.
+`item.html` загружает `/analytics/item_trend?item=<effective identity>` и строит line chart месячной медианы safe normalized price с явным denominator.
 
 ## Страница `/receipt/<id>`
 
@@ -336,7 +308,7 @@ SQL:
 SELECT id, name, quantity, price, category,
        category_source, normalized_unit_price, normalized_price_unit,
        line_total, unit_price, package_size, package_unit,
-       COALESCE(NULLIF(items.canonical_name, ''), items.name) AS display_name
+       <shared effective identity expression> AS display_name
 FROM items
 WHERE receipt_id = ?
 ORDER BY id
@@ -353,32 +325,15 @@ Python:
 
 Функция: `app/web/routes.py:build_receipt_price_analysis(conn, receipt_items)`.
 
-Для каждого товара собирается история:
-
-```sql
-SELECT quantity, price,
-       normalized_unit_price, normalized_price_unit
-FROM items
-WHERE COALESCE(NULLIF(items.canonical_name, ''), items.name) = ?
-  AND quantity > 0
-  AND price > 0
-ORDER BY id
-```
+`build_receipt_price_analysis()` загружает observations той же shared effective identity и передает каждую текущую строку в общий `evaluate_price_deviation()`.
 
 Python:
 
-- собирает историю `normalized_unit_price` по `normalized_price_unit`;
-- отдельно держит legacy историю `price / quantity`;
-- если текущая позиция имеет normalized price, сравнивает только внутри той же normalized unit;
-- если normalized price нет, сравнивает legacy `price / quantity`;
-- если у товара нет цены, количества или меньше 3 исторических точек, помечает как `insufficient`;
-- считает текущую цену как `normalized_unit_price` или legacy `price / quantity`;
-- считает медиану;
-- если текущая цена `<= median * 0.9`, позиция `cheap`;
-- если текущая цена `>= median * 1.15`, позиция `expensive`;
-- иначе позиция `normal`;
-- считает процент отклонения;
-- собирает summary: `total_items`, `cheap`, `expensive`, `insufficient`.
+- использует только eligible normalized price того же denominator;
+- берет минимум три prior observations за 180 дней;
+- исключает текущую строку и более поздние строки по `(date, receipt_id, item_id)`;
+- не использует `price / quantity` fallback;
+- переводит machine statuses в receipt summary `cheap`, `expensive`, `normal`, `insufficient`.
 
 ### Графики
 

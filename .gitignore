@@ -1,20 +1,62 @@
+# Python
 .venv/
+venv/
 __pycache__/
 *.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
 
+# Secrets and local configuration
 .env
+.env.*
+!.env.example
 
-data/*.db
+# Private receipts and generated databases
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
 data/uploads/
 data/pdf_receipts/
-
+data/ocr/
+data/extracted/
+data/exports/
 backups/
-refactor_preview/
+*.pdf
 
+# Private audits, exports, and generated previews
+docs/audits/
+docs/superpowers/
+*.log
+*.out
+*.err
+*.orig
+exports/
+tmp/
+tmp_ocr_test/
+refactor_preview/
+.codex-tmp/
+preview-dark.html
+preview-receipts.html
+CURRENT_STATE_REPORT.md
+PACKAGE_PIECE_AUDIT.md
+PRICE_MODEL_DRY_RUN_AUDIT.md
+PROJECT_GUIDE - Copy.md
+
+# Local tools and personal workspace state
+.claude-flow/
+.swarm/
+.superpowers/
+obsidian_vault/
+ruvector.db
+
+# Editor and OS files
 .vscode/
 .idea/
-
 .DS_Store
 Thumbs.db
-
-*.log
