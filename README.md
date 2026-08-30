@@ -1,4 +1,4 @@
-# Receipt Tracker v2
+# Receipt Intelligence — Retail Receipt Analytics Pipeline
 
 Local Flask and SQLite pipeline for turning grocery-receipt PDFs into reviewable household-spend data.
 
