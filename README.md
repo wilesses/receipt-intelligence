@@ -1,6 +1,19 @@
 # Receipt Intelligence — Retail Receipt Analytics Pipeline
 
-Local Flask and SQLite pipeline for turning grocery-receipt PDFs into reviewable household-spend data.
+Local-first Python, Flask, and SQLite application that turns grocery-receipt PDFs into reviewable, analysis-ready spending data.
+
+`Python` · `Flask` · `SQLite` · `OCR` · `SQL analytics` · `Data quality`
+
+![Receipt Intelligence dashboard](docs/images/dashboard.png)
+
+## What it does
+
+- imports and parses semi-structured receipt PDFs;
+- normalizes product identity without silently merging uncertain matches;
+- classifies purchases and keeps manual review in the loop;
+- derives comparable unit prices only when the evidence is reliable;
+- explores spending, product history, store prices, and data-quality issues;
+- keeps real receipts and personal databases outside the public repository.
 
 ## Problem and pipeline
 
@@ -24,15 +37,25 @@ Normalized names help matching but never automatically merge products. Reporting
 
 [Analysis queries](analysis/queries.sql) cover monthly/category spend, normalized store evidence and history, recurring products, and price-evidence coverage. Review with synthetic data only: keep real receipt PDFs, personal databases, exports, and screenshots out of public releases.
 
-## Synthetic-data screenshots
+## Product tour
 
-All three views below were rendered from `sample_data/receipts.json`; they contain no production receipt data.
+These screenshots show the current production UI rendered from `sample_data/receipts.json`. They contain no personal receipt data.
 
-![Spend analytics on synthetic data](docs/images/analytics.png)
+### Analytics
 
-![Synthetic receipt detail](docs/images/synthetic-receipt.png)
+![Spend analytics](docs/images/analytics.png)
 
-![Price-quality review on synthetic data](docs/images/price-quality.png)
+### Receipt evidence
+
+![Receipt detail](docs/images/synthetic-receipt.png)
+
+### Product dossier
+
+![Product price history and store comparison](docs/images/product-dossier.png)
+
+### Price-quality review
+
+![Price-quality diagnostics](docs/images/price-quality.png)
 
 ## Synthetic quick start
 
