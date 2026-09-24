@@ -39,7 +39,7 @@ Normalized names help matching but never automatically merge products. Reporting
 
 ## Product tour
 
-These screenshots show the current production UI rendered from `sample_data/receipts.json`. They contain no personal receipt data.
+These screenshots show the five portfolio views rendered in the optional English presentation mode from `sample_data/receipts.json`. They contain no personal receipt data. Russian remains the default UI; this mode does not claim full application localization or a language switcher.
 
 ### Analytics
 
@@ -67,6 +67,7 @@ python -m venv .venv
 python -m pip install -r requirements.txt
 $env:RECEIPT_DB_PATH = "tmp/public-sample/receipts.db"
 python -m app.create_sample_db --output $env:RECEIPT_DB_PATH
+$env:RECEIPT_UI_LANGUAGE = "en"  # optional: English portfolio views
 python run.py
 ```
 

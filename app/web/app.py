@@ -37,10 +37,14 @@ def create_app():
     app = Flask(__name__)
     app.secret_key = os.getenv("SECRET_KEY", "receipt-tracker-dev")
     app.config.setdefault("TODAY_PROVIDER", date.today)
+    app.config["UI_LANGUAGE"] = (
+        "en" if os.getenv("RECEIPT_UI_LANGUAGE", "").strip().lower() == "en" else "ru"
+    )
     init_routes(app)
     app.jinja_env.globals.update(
         category_color=category_color,
         category_for_reporting=category_for_reporting,
         category_source_label=lambda source: SOURCE_LABELS.get(source or "rule", source or "rule"),
+        ui_language=app.config["UI_LANGUAGE"],
     )
     return app

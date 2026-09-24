@@ -1,9 +1,11 @@
 import json
+import os
 import re
 import tempfile
 import unittest
 from datetime import date
 from pathlib import Path
+from unittest.mock import patch
 
 import app.db as db
 from app.web.app import create_app
@@ -38,6 +40,23 @@ class UIShellTests(unittest.TestCase):
         for path in paths:
             with self.subTest(path=path):
                 self.assertEqual(self.client.get(path).status_code, 200)
+
+    def test_english_portfolio_mode_is_opt_in(self):
+        default_html = self.client.get("/analytics").get_data(as_text=True)
+        self.assertIn('<html lang="ru"', default_html)
+        self.assertNotIn('src="/static/ui-en.js"', default_html)
+
+        with patch.dict(os.environ, {"RECEIPT_UI_LANGUAGE": "en"}):
+            english_app = create_app()
+            english_app.config["TESTING"] = True
+            english_client = english_app.test_client()
+            english_html = english_client.get("/analytics").get_data(as_text=True)
+            untranslated_html = english_client.get("/upload").get_data(as_text=True)
+
+        self.assertIn('<html lang="en"', english_html)
+        self.assertIn('src="/static/ui-en.js"', english_html)
+        self.assertIn('<html lang="ru"', untranslated_html)
+        self.assertNotIn('src="/static/ui-en.js"', untranslated_html)
 
     def test_navigation_marks_current_page(self):
         for path, href in (("/", "/"), ("/analytics", "/analytics"), ("/upload", "/upload")):

@@ -7,6 +7,7 @@
     const state = root.querySelector('[data-trend-state]');
     const valueList = root.querySelector('[data-trend-values]');
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const uiText = window.receiptUiText || (value => value);
     let chart = null;
     let trendData = null;
 
@@ -87,7 +88,7 @@
             data: {
                 labels: points.map((point) => point.label),
                 datasets: [{
-                    label: `Медианная сопоставимая цена, ${unitLabel}`,
+                    label: uiText(`Медианная сопоставимая цена, ${unitLabel}`),
                     data: points.map((point) => point.value),
                     borderColor: colors.primary,
                     backgroundColor: `${colors.primary}1f`,

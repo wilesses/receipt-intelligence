@@ -14,12 +14,14 @@
     const applyButton = document.getElementById('applyFilters');
     const status = document.getElementById('analyticsStatus');
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
-    const money = new Intl.NumberFormat('ru-RU', {
+    const uiText = window.receiptUiText || (value => value);
+    const locale = document.documentElement.lang === 'en' ? 'en-IE' : 'ru-RU';
+    const money = new Intl.NumberFormat(locale, {
         style: 'currency',
         currency: 'EUR',
         minimumFractionDigits: 2,
     });
-    const monthName = new Intl.DateTimeFormat('ru-RU', {
+    const monthName = new Intl.DateTimeFormat(locale, {
         month: 'long',
         year: 'numeric',
         timeZone: 'UTC',
@@ -138,7 +140,7 @@
     function currencyTick(value) {
         const numeric = Number(value);
         if (!Number.isFinite(numeric)) return '';
-        return `${numeric.toLocaleString('ru-RU', { maximumFractionDigits: 0 })} €`;
+        return `${numeric.toLocaleString(locale, { maximumFractionDigits: 0 })} €`;
     }
 
     function tooltipOptions() {
@@ -213,14 +215,14 @@
                 return `Расходы за ${current} не изменились относительно ${previous}.`;
             }
             const verb = line.direction === 'increased' ? 'выросли' : 'снизились';
-            return `Расходы за ${current} ${verb} относительно ${previous} на ${Number(line.change_percent).toLocaleString('ru-RU', { maximumFractionDigits: 1 })}%.`;
+            return `Расходы за ${current} ${verb} относительно ${previous} на ${Number(line.change_percent).toLocaleString(locale, { maximumFractionDigits: 1 })}%.`;
         }
         case 'comparison_unavailable':
             return `Сравнение ${localizedMonth(line.current_month)} с ${localizedMonth(line.previous_month)} недоступно: в базовом месяце сумма равна нулю.`;
         case 'peak_month':
             return `Максимальная сумма в доступном периоде приходится на ${localizedMonth(line.month)} — ${money.format(line.amount)}.`;
         case 'largest_category':
-            return `Крупнейшая категория — «${line.category}»: ${money.format(line.amount)}, или ${Number(line.share_percent).toLocaleString('ru-RU', { maximumFractionDigits: 1 })}% суммы среза.`;
+            return `Крупнейшая категория — «${line.category}»: ${money.format(line.amount)}, или ${Number(line.share_percent).toLocaleString(locale, { maximumFractionDigits: 1 })}% суммы среза.`;
         case 'top_product':
             return `Наибольшая сумма среди товаров приходится на «${line.product}» — ${money.format(line.amount)}.`;
         default:
@@ -298,7 +300,7 @@
             data: {
                 labels: data.months.labels,
                 datasets: [{
-                    label: 'Расходы',
+                    label: uiText('Расходы'),
                     data: data.months.values,
                     borderColor: colors.primary,
                     backgroundColor: `${colors.primary}1f`,
@@ -398,9 +400,9 @@
         createChart('categories', {
             type: 'bar',
             data: {
-                labels: data.categories.labels,
+                labels: data.categories.labels.map(uiText),
                 datasets: [{
-                    label: 'Сумма',
+                    label: uiText('Сумма'),
                     data: data.categories.values,
                     backgroundColor: colors.category,
                     hoverBackgroundColor: colors.primary,
@@ -445,7 +447,7 @@
             data: {
                 labels: data.top.labels,
                 datasets: [{
-                    label: 'Сумма',
+                    label: uiText('Сумма'),
                     data: data.top.values,
                     backgroundColor: colors.product,
                     hoverBackgroundColor: colors.trend,
@@ -521,7 +523,7 @@
             data: {
                 labels: data.labels,
                 datasets: [{
-                    label: `Медианная сопоставимая цена, ${unitLabel}`,
+                    label: uiText(`Медианная сопоставимая цена, ${unitLabel}`),
                     data: values,
                     borderColor: colors.trend,
                     backgroundColor: `${colors.trend}1f`,
